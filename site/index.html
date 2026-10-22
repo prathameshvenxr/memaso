@@ -5,22 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Memaso: memory for AI agents that stays true as things change</title>
   <meta name="description" content="Memaso stores what was said, dates the facts inside it, and gives your agent a small block for its prompt. A newer statement closes the older one. No model required.">
-  <meta name="theme-color" content="#FAF9FF" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0F0B1E" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121211" media="(prefers-color-scheme: dark)">
   <meta property="og:title" content="Memaso: memory that knows when it stopped being true">
   <meta property="og:description" content="Verbatim chunks plus dated facts. Recall costs no model tokens. Bring your own model only for the ambiguous cases.">
   <meta property="og:type" content="website">
-  <link rel="icon" href="assets/mark-light.svg" type="image/svg+xml">
-  <link rel="preload" href="assets/fonts/bricolage.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/styles.css">
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
-  <div class="rail" aria-hidden="true"><i></i></div>
 
   <header class="nav">
     <div class="container">
-      <a class="brand" href="./" aria-label="Memaso home"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"><img src="assets/logo-light.svg" alt="Memaso" width="150" height="30"></picture></a>
+      <a class="brand" href="./" aria-label="Memaso home">Memaso<span>.</span></a>
       <a class="link" href="docs.html">Docs</a>
       <a class="link" href="architecture.html">Architecture</a>
       <a class="link hide-sm" href="https://github.com/prathameshvenxr/memaso">GitHub</a>
@@ -30,7 +28,7 @@
 
   <main id="main">
     <section class="hero">
-      <div class="container hero-grid">
+      <div class="container">
         <div>
           <h1>Memory that knows when it stopped being true.</h1>
           <p class="lede">Memaso stores what was said, dates the facts inside it, and gives your agent a small block for its prompt. A newer statement closes the older one. No model required.</p>
@@ -44,13 +42,13 @@
         <div class="stage" id="pg">
           <div class="stage-top">
             <h2>Try it. Type like a user would.</h2>
-            <button class="btn" id="pg-play" type="button">Play the example</button>
-            <button class="btn" id="pg-clear" type="button">Clear</button>
+            <button class="btn ghost" id="pg-play" type="button">Play the example</button>
+            <button class="btn ghost" id="pg-clear" type="button">Clear</button>
           </div>
           <div class="pg" id="pg-lanes" role="group" aria-label="Your conversation, stored as verbatim chunks and as dated facts"></div>
           <form class="say" id="pg-form" autocomplete="off">
             <input id="pg-input" type="text" aria-label="Say something" placeholder="Actually the budget is 90k" maxlength="200">
-            <button class="btn pink" type="submit">Add</button>
+            <button class="btn" type="submit">Add</button>
           </form>
           <div class="chips" aria-label="Examples to try">
             <button type="button">I hate pie charts</button>
@@ -186,9 +184,9 @@ docker compose run --rm migrate python -m memory_core create-key acme --subject 
 
   <footer class="site">
     <div class="container">
-      <span class="grow"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"><img src="assets/logo-light.svg" alt="Memaso" width="120" height="24"></picture></span>
+      <span class="grow">Memaso<span>.</span></span>
       <a href="docs.html">Docs</a><a href="architecture.html">Architecture</a><a href="https://github.com/prathameshvenxr/memaso">GitHub</a>
-      <span>Set in Bricolage Grotesque and IBM Plex Mono, both under the SIL Open Font License.</span>
+      <span>Code set in IBM Plex Mono, under the SIL Open Font License.</span>
     </div>
   </footer>
 

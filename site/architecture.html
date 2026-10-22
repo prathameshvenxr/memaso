@@ -5,18 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Architecture: Memaso</title>
   <meta name="description" content="How Memaso stores, versions and recalls memory: the architecture, the ingest and recall pipelines, the data model, deployment, and the measurements behind the design choices.">
-  <meta name="theme-color" content="#FAF9FF" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0F0B1E" media="(prefers-color-scheme: dark)">
-  <link rel="icon" href="assets/mark-light.svg" type="image/svg+xml">
-  <link rel="preload" href="assets/fonts/bricolage.woff2" as="font" type="font/woff2" crossorigin>
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121211" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/styles.css">
 </head>
 <body class="has-toc">
   <a class="skip" href="#main">Skip to content</a>
-  <div class="rail" aria-hidden="true"><i></i></div>
   <header class="nav">
     <div class="container">
-      <a class="brand" href="./" aria-label="Memaso home"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"><img src="assets/logo-light.svg" alt="Memaso" width="150" height="30"></picture></a>
+      <a class="brand" href="./" aria-label="Memaso home">Memaso<span>.</span></a>
       <a class="link" href="docs.html">Docs</a>
       <a class="link" href="architecture.html" aria-current="page">Architecture</a>
       <a class="link hide-sm" href="https://github.com/prathameshvenxr/memaso">GitHub</a>
@@ -42,8 +40,6 @@
     <main id="main" class="prose wide">
       <h1>Architecture</h1>
       <p class="lead">One memory, two layers, searched together. Every dependency sits behind a port, and a model is asked only where rules cannot decide.</p>
-      <picture><source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg"><img src="assets/hero-light.svg" alt="A conversation is stored twice, as verbatim chunks and as dated facts. A later statement closes the old fact, and search returns the current fact plus the surviving words of old text." width="1200" height="560" style="width:100%;height:auto;border-radius:16px;border:1px solid var(--hair)"></picture>
-      <p class="figure-note">Two turns, stored twice. The later statement closes the 50k fact, its words are blanked inside the old chunk, and the prompt block reads current.</p>
 
       <h2 id="overview">Overview</h2>
       <p>Clients reach the engine as a library, over REST or MCP, or through an agent framework hook. Core code depends only on ports, so the language model, embedder, store, queue, auth and parser are all chosen in configuration.</p>
@@ -86,11 +82,11 @@
   RET --> STO
   MAN --> STO
   API --> AUTH
-  classDef verb fill:#E3F5F2,stroke:#0F8F83,color:#1A1630
-  classDef fact fill:#EFEBFF,stroke:#6A4CFF,color:#1A1630
-  classDef now fill:#FFE3EE,stroke:#F0397A,color:#1A1630
-  classDef port fill:#FFFFFF,stroke:#6B6785,stroke-dasharray:4 3,color:#1A1630
-  classDef plain fill:#F6F5FB,stroke:#B3AFC6,color:#1A1630
+  classDef verb fill:#FFFFFF,stroke:#66665F,color:#1C1C1A
+  classDef fact fill:#F6F6F1,stroke:#1C1C1A,color:#1C1C1A
+  classDef now fill:#FDE9DC,stroke:#F26522,color:#1C1C1A
+  classDef port fill:#FFFFFF,stroke:#66665F,stroke-dasharray:4 3,color:#1C1C1A
+  classDef plain fill:#F6F6F1,stroke:#CFCFC5,color:#1C1C1A
   class LIB,REST,MCP,LG plain
   class API,ING,RET,MAN fact
   class LLM,EMB,STO,QUE,AUTH port</script><p class="figure-note">Solid arrows are calls. Dashed boxes are ports: each has several adapters and a contract test suite, and a test fails the build if core code imports an adapter.</p>
@@ -137,10 +133,10 @@
   K -- "overlapping<br/>budget / monthly budget" --> AMB
   AMB["ambiguous"] -- "a model is available" --> LLMJ["ask it once<br/>candidate + 5 neighbours"]
   AMB -- "no model" --> KEEP["keep both<br/>never guess"]
-  classDef verb fill:#E3F5F2,stroke:#0F8F83,color:#1A1630
-  classDef fact fill:#EFEBFF,stroke:#6A4CFF,color:#1A1630
-  classDef now fill:#FFE3EE,stroke:#F0397A,color:#1A1630
-  classDef plain fill:#F6F5FB,stroke:#B3AFC6,color:#1A1630
+  classDef verb fill:#FFFFFF,stroke:#66665F,color:#1C1C1A
+  classDef fact fill:#F6F6F1,stroke:#1C1C1A,color:#1C1C1A
+  classDef now fill:#FDE9DC,stroke:#F26522,color:#1C1C1A
+  classDef plain fill:#F6F6F1,stroke:#CFCFC5,color:#1C1C1A
   class NEW,DUP,KEEP plain
   class UPD,CON now
   class LLMJ verb
@@ -161,11 +157,11 @@
   R --> P["pack to the token budget<br/>escaped, labelled untrusted"]
   P --> O(["context block"])
   FLOOR["cosine floor 0.30<br/>weak matches are dropped"] -.-> F
-  classDef verb fill:#E3F5F2,stroke:#0F8F83,color:#1A1630
-  classDef fact fill:#EFEBFF,stroke:#6A4CFF,color:#1A1630
-  classDef now fill:#FFE3EE,stroke:#F0397A,color:#1A1630
-  classDef port fill:#FFFFFF,stroke:#6B6785,stroke-dasharray:4 3,color:#1A1630
-  classDef plain fill:#F6F5FB,stroke:#B3AFC6,color:#1A1630
+  classDef verb fill:#FFFFFF,stroke:#66665F,color:#1C1C1A
+  classDef fact fill:#F6F6F1,stroke:#1C1C1A,color:#1C1C1A
+  classDef now fill:#FDE9DC,stroke:#F26522,color:#1C1C1A
+  classDef port fill:#FFFFFF,stroke:#66665F,stroke-dasharray:4 3,color:#1C1C1A
+  classDef plain fill:#F6F6F1,stroke:#CFCFC5,color:#1C1C1A
   class FV,FK fact
   class CV,CK verb
   class O now
@@ -241,10 +237,10 @@
   API --> PG[("postgres 16 + pgvector<br/>schema memaso<br/>row-level security")]
   API --> REDIS[("redis<br/>job queue<br/>when replicas > 1")]
   API -. "optional" .-> HOST["the app's own model<br/>my_llm"]
-  classDef verb fill:#E3F5F2,stroke:#0F8F83,color:#1A1630
-  classDef fact fill:#EFEBFF,stroke:#6A4CFF,color:#1A1630
-  classDef port fill:#FFFFFF,stroke:#6B6785,stroke-dasharray:4 3,color:#1A1630
-  classDef plain fill:#F6F5FB,stroke:#B3AFC6,color:#1A1630
+  classDef verb fill:#FFFFFF,stroke:#66665F,color:#1C1C1A
+  classDef fact fill:#F6F6F1,stroke:#1C1C1A,color:#1C1C1A
+  classDef port fill:#FFFFFF,stroke:#66665F,stroke-dasharray:4 3,color:#1C1C1A
+  classDef plain fill:#F6F6F1,stroke:#CFCFC5,color:#1C1C1A
   class API fact
   class REDIS,PG verb
   class HOST port
@@ -280,9 +276,9 @@
 
   <footer class="site">
     <div class="container">
-      <span class="grow"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"><img src="assets/logo-light.svg" alt="Memaso" width="120" height="24"></picture></span>
+      <span class="grow">Memaso<span>.</span></span>
       <a href="./">Home</a><a href="docs.html">Docs</a><a href="https://github.com/prathameshvenxr/memaso">GitHub</a>
-      <span>Set in Bricolage Grotesque and IBM Plex Mono, both under the SIL Open Font License.</span>
+      <span>Code set in IBM Plex Mono, under the SIL Open Font License.</span>
     </div>
   </footer>
 
@@ -290,18 +286,18 @@
   <script type="module">
     import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
     const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const light = { primaryColor: "#EFEBFF", primaryBorderColor: "#6A4CFF", primaryTextColor: "#1A1630", secondaryColor: "#E3F5F2",
-      tertiaryColor: "#F6F5FB", lineColor: "#8A86A6", clusterBkg: "#F6F5FB", clusterBorder: "#B3AFC6", titleColor: "#1A1630",
-      edgeLabelBackground: "#FAF9FF", actorBkg: "#EFEBFF", actorBorder: "#6A4CFF", actorTextColor: "#1A1630", actorLineColor: "#8A86A6",
-      signalColor: "#6B6785", signalTextColor: "#6B6785", labelBoxBkgColor: "#EFEBFF", labelBoxBorderColor: "#6A4CFF", labelTextColor: "#1A1630",
-      loopTextColor: "#6B6785", noteBkgColor: "#FFE9F1", noteBorderColor: "#F0397A", noteTextColor: "#1A1630", sequenceNumberColor: "#FFFFFF" };
-    const night = { primaryColor: "#261E47", primaryBorderColor: "#9B87FF", primaryTextColor: "#F4F2FF", secondaryColor: "#12343A",
-      tertiaryColor: "#1B1533", lineColor: "#8F89B3", clusterBkg: "#17122B", clusterBorder: "#3A3260", titleColor: "#F4F2FF",
-      edgeLabelBackground: "#0F0B1E", actorBkg: "#261E47", actorBorder: "#9B87FF", actorTextColor: "#F4F2FF", actorLineColor: "#8F89B3",
-      signalColor: "#A29DC2", signalTextColor: "#A29DC2", labelBoxBkgColor: "#261E47", labelBoxBorderColor: "#9B87FF", labelTextColor: "#F4F2FF",
-      loopTextColor: "#A29DC2", noteBkgColor: "#3A1830", noteBorderColor: "#FF5C93", noteTextColor: "#F4F2FF", sequenceNumberColor: "#0F0B1E" };
+    const light = { primaryColor: "#F6F6F1", primaryBorderColor: "#1C1C1A", primaryTextColor: "#1C1C1A", secondaryColor: "#FFFFFF",
+      tertiaryColor: "#F6F6F1", lineColor: "#8A8A82", clusterBkg: "#F6F6F1", clusterBorder: "#CFCFC5", titleColor: "#1C1C1A",
+      edgeLabelBackground: "#FFFFFF", actorBkg: "#F6F6F1", actorBorder: "#1C1C1A", actorTextColor: "#1C1C1A", actorLineColor: "#8A8A82",
+      signalColor: "#66665F", signalTextColor: "#66665F", labelBoxBkgColor: "#F6F6F1", labelBoxBorderColor: "#1C1C1A", labelTextColor: "#1C1C1A",
+      loopTextColor: "#66665F", noteBkgColor: "#FDE9DC", noteBorderColor: "#F26522", noteTextColor: "#1C1C1A", sequenceNumberColor: "#FFFFFF" };
+    const night = { primaryColor: "#262624", primaryBorderColor: "#EDEDE8", primaryTextColor: "#EDEDE8", secondaryColor: "#1F1F1D",
+      tertiaryColor: "#1A1A18", lineColor: "#8A8A82", clusterBkg: "#171715", clusterBorder: "#45453F", titleColor: "#EDEDE8",
+      edgeLabelBackground: "#121211", actorBkg: "#262624", actorBorder: "#EDEDE8", actorTextColor: "#EDEDE8", actorLineColor: "#8A8A82",
+      signalColor: "#A3A39B", signalTextColor: "#A3A39B", labelBoxBkgColor: "#262624", labelBoxBorderColor: "#EDEDE8", labelTextColor: "#EDEDE8",
+      loopTextColor: "#A3A39B", noteBkgColor: "#3A2214", noteBorderColor: "#FF7A3D", noteTextColor: "#EDEDE8", sequenceNumberColor: "#121211" };
     await document.fonts.ready;
-    mermaid.initialize({ startOnLoad: false, theme: "base", securityLevel: "strict", flowchart: { useMaxWidth: true, htmlLabels: true }, sequence: { useMaxWidth: true }, er: { useMaxWidth: true }, themeVariables: { fontFamily: '"Bricolage Grotesque", ui-sans-serif, sans-serif', ...(dark ? night : light) } });
+    mermaid.initialize({ startOnLoad: false, theme: "base", securityLevel: "strict", flowchart: { useMaxWidth: true, htmlLabels: true }, sequence: { useMaxWidth: true }, er: { useMaxWidth: true }, themeVariables: { fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif', ...(dark ? night : light) } });
     for (const el of document.querySelectorAll("script.mmd")) {
       const target = document.getElementById(el.dataset.target);
       try {

@@ -1,18 +1,6 @@
-/* Shared behaviour: the "now" dot on the rail, copy buttons, docs scroll-spy. No dependencies. */
+/* Shared behaviour: copy buttons and the docs scroll-spy. No dependencies. */
 (function () {
   "use strict";
-
-  // The pink dot rides the rail with scroll progress.
-  var dot = document.querySelector(".rail i");
-  function place() {
-    if (!dot) return;
-    var max = document.documentElement.scrollHeight - window.innerHeight;
-    var f = max > 0 ? window.scrollY / max : 0;
-    dot.style.top = Math.max(0, Math.min(1, f)) * dot.parentElement.clientHeight + "px";
-  }
-  window.addEventListener("scroll", place, { passive: true });
-  window.addEventListener("resize", place);
-  place();
 
   // Copy buttons: every <pre class="code"> and every .snippet gets one.
   function attach(btn, getText) {
@@ -38,7 +26,7 @@
     attach(btn, function () { return btn.parentElement.querySelector("code").innerText; });
   });
 
-  // Docs table of contents: the pink dot marks the last heading that has scrolled past the top.
+  // Docs table of contents: the orange rule marks the last heading that has scrolled past the top.
   var toc = document.querySelector(".toc");
   if (toc) {
     var links = Array.prototype.slice.call(toc.querySelectorAll("a[href^='#']"));
