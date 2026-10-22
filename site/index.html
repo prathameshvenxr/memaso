@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memaso: memory for AI agents that stays true as things change</title>
+  <meta name="description" content="Memaso stores what was said, dates the facts inside it, and gives your agent a small block for its prompt. A newer statement closes the older one. No model required.">
+  <meta name="theme-color" content="#FAF9FF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0F0B1E" media="(prefers-color-scheme: dark)">
+  <meta property="og:title" content="Memaso: memory that knows when it stopped being true">
+  <meta property="og:description" content="Verbatim chunks plus dated facts. Recall costs no model tokens. Bring your own model only for the ambiguous cases.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="assets/mark-light.svg" type="image/svg+xml">
+  <link rel="preload" href="assets/fonts/bricolage.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="rail" aria-hidden="true"><i></i></div>
+
+  <header class="nav">
+    <div class="container">
+      <a class="brand" href="./" aria-label="Memaso home"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"><img src="assets/logo-light.svg" alt="Memaso" width="150" height="30"></picture></a>
+      <a class="link" href="docs.html">Docs</a>
+      <a class="link" href="architecture.html">Architecture</a>
+      <a class="link hide-sm" href="https://github.com/prathameshvenxr/memaso">GitHub</a>
+      <a class="btn sm" href="docs.html#quick-start">Get started</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="container hero-grid">
+        <div>
+          <h1>Memory that knows when it stopped being true.</h1>
+          <p class="lede">Memaso stores what was said, dates the facts inside it, and gives your agent a small block for its prompt. A newer statement closes the older one. No model required.</p>
+          <div class="hero-cta">
+            <a class="btn" href="docs.html">Read the docs</a>
+            <a class="btn ghost" href="architecture.html">See how it works</a>
+          </div>
+          <div class="snippet"><code>docker compose up -d</code><button class="copy" type="button">Copy</button></div>
+        </div>
+
+        <div class="stage" id="pg">
+          <div class="stage-top">
+            <h2>Try it. Type like a user would.</h2>
+            <button class="btn" id="pg-play" type="button">Play the example</button>
+            <button class="btn" id="pg-clear" type="button">Clear</button>
+          </div>
+          <div class="pg" id="pg-lanes" role="group" aria-label="Your conversation, stored as verbatim chunks and as dated facts"></div>
+          <form class="say" id="pg-form" autocomplete="off">
+            <input id="pg-input" type="text" aria-label="Say something" placeholder="Actually the budget is 90k" maxlength="200">
+            <button class="btn pink" type="submit">Add</button>
+          </form>
+          <div class="chips" aria-label="Examples to try">
+            <button type="button">I hate pie charts</button>
+            <button type="button">I like pie charts</button>
+            <button type="button">The CPA target is 420</button>
+            <button type="button">We've raised our monthly budget to 90k</button>
+            <button type="button">What is the budget?</button>
+          </div>
+          <div class="prompt">
+            <div class="prompt-head">What the prompt gets <span id="pg-tokens"></span></div>
+            <pre id="pg-prompt" aria-live="polite"></pre>
+          </div>
+          <p class="caveat" id="pg-status" aria-live="polite"></p>
+          <p class="caveat">Runs in your browser: a port of the engine's rules path, with no model and no network. The engine itself is Python on Postgres.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="two-layers">
+      <div class="container">
+        <div class="sec-head">
+          <h2>Every turn is kept twice.</h2>
+          <p>Once as it was said, once as facts with dates. Recall reads both, so the exact words are never lost and the current value is never ambiguous.</p>
+        </div>
+        <div class="lanes">
+          <div class="lane-row">
+            <div class="who"><span class="dot teal"></span>Verbatim</div>
+            <div><h3>The words, as they were said</h3><p>Each turn is cut into passages of about 800 characters and embedded on your own machine. Nothing is lost to a summary, and search needs no model.</p></div>
+            <div class="ex">user: Budget is 50k. I want weekly reports in INR.</div>
+          </div>
+          <div class="lane-row">
+            <div class="who"><span class="dot violet"></span>Facts</div>
+            <div><h3>The statements inside them, with dates</h3><p>Plain statements become facts with <code>valid_from</code> and <code>valid_to</code>. A newer one closes the older, and the history stays for <code>as_of</code> questions.</p></div>
+            <div class="ex"><s>Budget is 50k</s>  closed feb 1<br><b>the budget is 80k</b>  current</div>
+          </div>
+          <div class="lane-row">
+            <div class="who"><span class="dot pink"></span>Now</div>
+            <div><h3>One block for the prompt</h3><p>Search fuses both layers, blanks out superseded words inside old text, and packs the result to the token budget you set. Recalled text is escaped and labelled as untrusted data.</p></div>
+            <div class="ex">&lt;memory kind="fact"&gt;the budget is 80k&lt;/memory&gt;</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block tint" id="cost">
+      <div class="container">
+        <div class="cost">
+          <div class="big0">0<small>model tokens to recall</small></div>
+          <div class="scroll-x">
+            <table>
+              <thead><tr><th>Step</th><th>Model tokens</th></tr></thead>
+              <tbody>
+                <tr><td>Embedding passages and queries (local ONNX)</td><td class="zero">0</td></tr>
+                <tr><td>Recall: vector and full-text over both layers, fused</td><td class="zero">0</td></tr>
+                <tr><td>Facts from the agent's own <code>remember</code> call, or from rules</td><td class="zero">0 extra</td></tr>
+                <tr><td>Judging update versus new, plain statements</td><td class="zero">0</td></tr>
+                <tr><td>Judging free text close to a stored fact</td><td class="some">your model, only then</td></tr>
+                <tr><td>Facts extracted by a model (off by default)</td><td class="some">your model, per document</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="judge">
+      <div class="container">
+        <div class="sec-head">
+          <h2>A model only when it has to.</h2>
+          <p>Deciding whether a new sentence updates a stored one is the one place a model helps. Memaso settles the clear cases itself and asks only about the rest.</p>
+        </div>
+        <div class="ladder">
+          <div class="step"><div class="tagline"><span class="dot violet"></span>Rules</div><h3>Plain statements</h3><p>“The budget is 80k” has a subject, a verb and a value. Same attribute is an update, a different attribute is new, and an exact opposite preference is a contradiction.</p></div>
+          <div class="step"><div class="tagline"><span class="dot pink"></span>Your model</div><h3>Ambiguous free text</h3><p>“Monthly budget” against “budget” may or may not be the same thing. If you pass <code>llm=your_call</code> it is asked once, with one candidate and five neighbours. It is the model you already run, on your keys.</p></div>
+          <div class="step"><div class="tagline"><span class="dot grey"></span>Neither</div><h3>No model, no guess</h3><p>Without a model both facts stay and the unsure one is marked. Memaso keeps two facts before it overwrites a true one.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block tint" id="numbers">
+      <div class="container">
+        <div class="sec-head">
+          <h2>Measured, including the misses.</h2>
+          <p>Local MiniLM embeddings, no language model anywhere in these runs.</p>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="n">1.00</div><p>recall@5 on 240 synthetic ads conversations.</p></div>
+          <div class="stat"><div class="n">1.00</div><p>correct after an update: the newer value wins and the old one is never returned as current.</p></div>
+          <div class="stat"><div class="n">5<small>of 6</small></div><p>kinds of messy chat at 1.00: first-person phrasing, corrections, compound sentences, buried facts, opposite preferences.</p></div>
+          <div class="stat"><div class="n warn">0.00</div><p>on paraphrased updates without a model (“raised our monthly budget to 80k”). A model resolves these, which is why one is optional and not absent.</p></div>
+          <div class="stat"><div class="n">233<small>ms</small></div><p>p95 search at 100k vectors for one subject, query embedding included. 333 ms at 200k.</p></div>
+          <div class="stat"><div class="n">201<small>tests</small></div><p>including row-level-security checks, a cross-tenant fuzz, concurrency tests and a regression test for every review finding.</p></div>
+        </div>
+        <p class="fineprint">The datasets are synthetic and template-based, and the model-driven paths are tested with scripted answers, not a live provider. The <a href="docs.html#limits">limits</a> are written down.</p>
+      </div>
+    </section>
+
+    <section class="block" id="swap">
+      <div class="container">
+        <div class="sec-head">
+          <h2>Swap anything.</h2>
+          <p>Every dependency sits behind a port and is chosen in configuration. Core code never imports a vendor SDK, and a test fails the build if it does.</p>
+        </div>
+        <div class="ports">
+          <div class="port"><b>Language model</b><span>none, your own call, Anthropic, OpenAI, any compatible server</span></div>
+          <div class="port"><b>Embeddings</b><span>local ONNX (free), OpenAI</span></div>
+          <div class="port"><b>Store</b><span>Postgres with pgvector, in its own schema</span></div>
+          <div class="port"><b>Queue</b><span>in-process, Redis for replicas</span></div>
+          <div class="port"><b>Auth and parser</b><span>API keys, plain text</span></div>
+          <div class="port"><b>Yours</b><span><code>adapter: "package.module:factory"</code>, certified by the contract tests</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="start" style="padding-top:0">
+      <div class="container">
+        <div class="cta">
+          <div>
+            <h2>Run it in a minute.</h2>
+            <p>Postgres, the API and a local embedding model. No keys, nothing paid.</p>
+            <div class="hero-cta" style="margin-bottom:0"><a class="btn" href="docs.html#quick-start">Quick start</a><a class="btn ghost" href="architecture.html">Architecture</a></div>
+          </div>
+          <pre class="code"><code><span class="c"># Postgres + API</span>
+docker compose up -d
+
+<span class="c"># create a tenant and a key (printed once)</span>
+docker compose run --rm migrate python -m memory_core create-tenant acme
+docker compose run --rm migrate python -m memory_core create-key acme --subject alice</code></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site">
+    <div class="container">
+      <span class="grow"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"><img src="assets/logo-light.svg" alt="Memaso" width="120" height="24"></picture></span>
+      <a href="docs.html">Docs</a><a href="architecture.html">Architecture</a><a href="https://github.com/prathameshvenxr/memaso">GitHub</a>
+      <span>Set in Bricolage Grotesque and IBM Plex Mono, both under the SIL Open Font License.</span>
+    </div>
+  </footer>
+
+  <script src="assets/app.js" defer></script>
+  <script src="assets/playground.js" defer></script>
+</body>
+</html>

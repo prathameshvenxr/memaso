@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture: Memaso</title>
+  <meta name="description" content="How Memaso stores, versions and recalls memory: the architecture, the ingest and recall pipelines, the data model, deployment, and the measurements behind the design choices.">
+  <meta name="theme-color" content="#FAF9FF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0F0B1E" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="assets/mark-light.svg" type="image/svg+xml">
+  <link rel="preload" href="assets/fonts/bricolage.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body class="has-toc">
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="rail" aria-hidden="true"><i></i></div>
+  <header class="nav">
+    <div class="container">
+      <a class="brand" href="./" aria-label="Memaso home"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"><img src="assets/logo-light.svg" alt="Memaso" width="150" height="30"></picture></a>
+      <a class="link" href="docs.html">Docs</a>
+      <a class="link" href="architecture.html" aria-current="page">Architecture</a>
+      <a class="link hide-sm" href="https://github.com/prathameshvenxr/memaso">GitHub</a>
+      <a class="btn sm" href="docs.html#quick-start">Get started</a>
+    </div>
+  </header>
+
+  <div class="container doc wide-page">
+    <nav class="toc" aria-label="On this page">
+      <ol>
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#ingest">Ingest</a></li>
+        <li><a href="#supersession">Supersession</a></li>
+        <li><a href="#recall">Recall</a></li>
+        <li><a href="#integration">In an agent loop</a></li>
+        <li><a href="#data-model">Data model</a></li>
+        <li><a href="#deployment">Deployment</a></li>
+        <li><a href="#decisions">Design decisions</a></li>
+        <li><a href="#measurements">Measurements</a></li>
+      </ol>
+    </nav>
+
+    <main id="main" class="prose wide">
+      <h1>Architecture</h1>
+      <p class="lead">One memory, two layers, searched together. Every dependency sits behind a port, and a model is asked only where rules cannot decide.</p>
+      <picture><source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg"><img src="assets/hero-light.svg" alt="A conversation is stored twice, as verbatim chunks and as dated facts. A later statement closes the old fact, and search returns the current fact plus the surviving words of old text." width="1200" height="560" style="width:100%;height:auto;border-radius:16px;border:1px solid var(--hair)"></picture>
+      <p class="figure-note">Two turns, stored twice. The later statement closes the 50k fact, its words are blanked inside the old chunk, and the prompt block reads current.</p>
+
+      <h2 id="overview">Overview</h2>
+      <p>Clients reach the engine as a library, over REST or MCP, or through an agent framework hook. Core code depends only on ports, so the language model, embedder, store, queue, auth and parser are all chosen in configuration.</p>
+      <div class="diagram loading" id="d0" role="img" aria-label="diagram"><span>Loading diagram…</span></div><script type="text/plain" class="mmd" data-target="d0">flowchart LR
+  subgraph clients[" Clients "]
+    direction TB
+    LIB["Library<br/>Memory.create(cfg, llm=call_llm)"]
+    REST["REST + Python SDK"]
+    MCP["MCP server<br/>4 tools"]
+    LG["LangGraph hook<br/>remember / context"]
+  end
+  subgraph core[" memory_core "]
+    direction TB
+    API["API layer<br/>keys · rate limit · token budget"]
+    ING["Ingest<br/>chunk · embed · extract · judge"]
+    RET["Recall<br/>hybrid search · fuse · pack"]
+    MAN["Manage<br/>edit · forget · export"]
+  end
+  subgraph ports[" Ports: every one swappable by config "]
+    direction TB
+    LLM[["LLM<br/>none · host · anthropic · openai · compat"]]
+    EMB[["Embedder<br/>fastembed (local) · openai"]]
+    STO[["Store<br/>postgres + pgvector"]]
+    QUE[["Queue<br/>in-process · redis"]]
+    AUTH[["Auth · Parser"]]
+  end
+  LIB --> ING
+  LIB --> RET
+  REST --> API
+  MCP --> API
+  LG --> REST
+  API --> ING
+  API --> RET
+  API --> MAN
+  ING --> LLM
+  ING --> EMB
+  ING --> STO
+  ING --> QUE
+  RET --> EMB
+  RET --> STO
+  MAN --> STO
+  API --> AUTH
+  classDef verb fill:#E3F5F2,stroke:#0F8F83,color:#1A1630
+  classDef fact fill:#EFEBFF,stroke:#6A4CFF,color:#1A1630
+  classDef now fill:#FFE3EE,stroke:#F0397A,color:#1A1630
+  classDef port fill:#FFFFFF,stroke:#6B6785,stroke-dasharray:4 3,color:#1A1630
+  classDef plain fill:#F6F5FB,stroke:#B3AFC6,color:#1A1630
+  class LIB,REST,MCP,LG plain
+  class API,ING,RET,MAN fact
+  class LLM,EMB,STO,QUE,AUTH port</script><p class="figure-note">Solid arrows are calls. Dashed boxes are ports: each has several adapters and a contract test suite, and a test fails the build if core code imports an adapter.</p>
+
+      <h2 id="ingest">Ingest</h2>
+      <p>Adding content returns immediately. A worker then takes the subject's lock, stores the verbatim chunks, derives facts, and resolves each against what is already known, all with no model unless one is needed.</p>
+      <div class="diagram loading" id="d1" role="img" aria-label="diagram"><span>Loading diagram…</span></div><script type="text/plain" class="mmd" data-target="d1">sequenceDiagram
+  autonumber
+  participant C as Client
+  participant A as API
+  participant Q as Queue
+  participant W as Worker
+  participant S as Postgres (schema memaso)
+  C->>A: add("Actually the budget is 80k")
+  A->>S: put document (idempotent on tenant + content)
+  A->>Q: enqueue job
+  A-->>C: 202 queued
+  Q->>W: job
+  W->>S: take the subject's advisory lock
+  Note over W,S: older pending documents of this subject run first
+  W->>W: split into ~800 character chunks
+  W->>S: store chunks + local embeddings (no model call)
+  W->>W: facts by rules, or by the model if facts.extract = llm
+  loop each candidate fact
+    W->>S: neighbours in the same account (cosine 0.40 or more)
+    W->>W: rules judge, a model only if ambiguous
+    W->>S: insert new fact, link, close the old one (one transaction)
+  end
+  W->>S: mark document indexed</script><p class="figure-note">Older pending documents of the same subject run first, so the newest statement is applied last whichever worker picked up its job first.</p>
+
+      <h2 id="supersession">Supersession</h2>
+      <p>Embedding similarity alone cannot tell a duplicate from an update, since “Budget is 50k” and “Budget is 80k” embed almost identically. So similarity is only used to find neighbours; the decision uses text and, when needed, a model.</p>
+      <div class="diagram loading" id="d2" role="img" aria-label="diagram"><span>Loading diagram…</span></div><script type="text/plain" class="mmd" data-target="d2">flowchart TB
+  C(["candidate fact"]) --> N["neighbours?<br/>same account<br/>cosine ≥ 0.40"]
+  N -- none --> NEW["new fact"]
+  N -- some --> D["same text?"]
+  D -- yes --> DUP["duplicate<br/>confidence + 0.1"]
+  D -- no --> P["a preference?"]
+  P -- "opposite verb,<br/>same thing" --> CON["contradicts<br/>supersede"]
+  P -- "any other<br/>preference" --> AMB
+  P -- "plain 'X is Y'" --> K["same subject?"]
+  K -- "same attribute" --> UPD["updates<br/>supersede"]
+  K -- "different attribute" --> NEW
+  K -- "overlapping<br/>budget / monthly budget" --> AMB
+  AMB["ambiguous"] -- "a model is available" --> LLMJ["ask it once<br/>candidate + 5 neighbours"]
+  AMB -- "no model" --> KEEP["keep both<br/>never guess"]
+  classDef verb fill:#E3F5F2,stroke:#0F8F83,color:#1A1630
+  classDef fact fill:#EFEBFF,stroke:#6A4CFF,color:#1A1630
+  classDef now fill:#FFE3EE,stroke:#F0397A,color:#1A1630
+  classDef plain fill:#F6F5FB,stroke:#B3AFC6,color:#1A1630
+  class NEW,DUP,KEEP plain
+  class UPD,CON now
+  class LLMJ verb
+  class N,D,P,K,AMB fact</script><p class="figure-note">Only the ambiguous branch ever reaches a model. Without one, both facts stay and nothing is guessed.</p>
+
+      <h2 id="recall">Recall</h2>
+      <div class="diagram loading" id="d3" role="img" aria-label="diagram"><span>Loading diagram…</span></div><script type="text/plain" class="mmd" data-target="d3">flowchart LR
+  Q(["query + token_budget"]) --> E["embed locally"]
+  E --> FV["facts<br/>vector"]
+  Q --> FK["facts<br/>full-text"]
+  E --> CV["chunks<br/>vector"]
+  Q --> CK["chunks<br/>full-text"]
+  FV --> F["rank fusion<br/>weights 1 · 1 · 0.8 · 0.8"]
+  FK --> F
+  CV --> F
+  CK --> F
+  F --> R["redact superseded words<br/>inside chunks"]
+  R --> P["pack to the token budget<br/>escaped, labelled untrusted"]
+  P --> O(["context block"])
+  FLOOR["cosine floor 0.30<br/>weak matches are dropped"] -.-> F
+  classDef verb fill:#E3F5F2,stroke:#0F8F83,color:#1A1630
+  classDef fact fill:#EFEBFF,stroke:#6A4CFF,color:#1A1630
+  classDef now fill:#FFE3EE,stroke:#F0397A,color:#1A1630
+  classDef port fill:#FFFFFF,stroke:#6B6785,stroke-dasharray:4 3,color:#1A1630
+  classDef plain fill:#F6F5FB,stroke:#B3AFC6,color:#1A1630
+  class FV,FK fact
+  class CV,CK verb
+  class O now
+  class FLOOR plain</script><p class="figure-note">Fusion weights favour facts slightly over the chunks they came from. The cosine floor trades a little recall for abstaining on off-domain questions.</p>
+
+      <h2 id="integration">In an agent loop</h2>
+      <p>Memaso replaces “inject every memory” with a small ranked block, and takes facts from the agent's own tool call so there is no extraction pass.</p>
+      <div class="diagram loading" id="d4" role="img" aria-label="diagram"><span>Loading diagram…</span></div><script type="text/plain" class="mmd" data-target="d4">sequenceDiagram
+  autonumber
+  participant U as User
+  participant A as Agent runtime
+  participant M as Memaso
+  participant L as Your model call
+  U->>A: question
+  A->>M: context(scope, question, 1500)
+  M-->>A: small ranked block, no model call
+  Note over A: instead of injecting every memory
+  A->>L: prompt + memory block + tools
+  L-->>A: tool call remember("CPA target is 420")
+  A->>M: remember(scope, fact)
+  Note over M: no extraction call, the agent already did it
+  L-->>A: answer
+  A->>M: ingest_turn(scope, messages)
+  Note over M: stored verbatim, facts by rules, queued
+  A-->>U: answer
+  Note over A,M: before old turns are summarised: archive(turns)</script><p class="figure-note">The only model involved is the one your agent already runs.</p>
+
+      <h2 id="data-model">Data model</h2>
+      <p>Everything lives in a dedicated Postgres schema, <code>memaso</code>, with row-level security forced on every data table.</p>
+      <div class="diagram loading" id="d5" role="img" aria-label="diagram"><span>Loading diagram…</span></div><script type="text/plain" class="mmd" data-target="d5">erDiagram
+  TENANTS ||--o{ API_KEYS : has
+  DOCUMENTS ||--o{ CHUNKS : "split into"
+  DOCUMENTS ||--o{ MEMORY_SOURCES : cites
+  MEMORIES ||--o{ MEMORY_SOURCES : "derived from"
+  MEMORIES ||--o{ MEMORY_LINKS : supersedes
+  MEMORIES ||--o{ EMBEDDINGS : "vector per model_id"
+  MEMORIES ||--o{ MEMORY_CHUNKS : "found in"
+  CHUNKS ||--o{ MEMORY_CHUNKS : "holds"
+  DOCUMENTS {
+    text id PK
+    text tenant
+    text subject
+    text container
+    text status "queued extracting indexed failed"
+    timestamptz created_at "observed time"
+  }
+  CHUNKS {
+    text id PK
+    text document_id FK
+    text text
+    timestamptz observed_at
+    vector vector
+    text model_id
+  }
+  MEMORIES {
+    text id PK
+    text text
+    text kind "fact preference decision"
+    real confidence
+    timestamptz valid_from
+    timestamptz valid_to "null while current"
+  }
+  MEMORY_CHUNKS {
+    text memory_id FK
+    text chunk_id FK
+    bool exact "own words found in the chunk"
+  }</script><p class="figure-note">Memory links (supersession history with the judge's reason) and per-model embeddings are not drawn.</p>
+
+      <h2 id="deployment">Deployment</h2>
+      <div class="diagram loading" id="d6" role="img" aria-label="diagram"><span>Loading diagram…</span></div><script type="text/plain" class="mmd" data-target="d6">flowchart LR
+  USER(["agents · apps"]) --> PROXY["reverse proxy"]
+  PROXY --> API["api × N<br/>stateless<br/>local ONNX embedder"]
+  API --> PG[("postgres 16 + pgvector<br/>schema memaso<br/>row-level security")]
+  API --> REDIS[("redis<br/>job queue<br/>when replicas > 1")]
+  API -. "optional" .-> HOST["the app's own model<br/>call_llm"]
+  classDef verb fill:#E3F5F2,stroke:#0F8F83,color:#1A1630
+  classDef fact fill:#EFEBFF,stroke:#6A4CFF,color:#1A1630
+  classDef port fill:#FFFFFF,stroke:#6B6785,stroke-dasharray:4 3,color:#1A1630
+  classDef plain fill:#F6F5FB,stroke:#B3AFC6,color:#1A1630
+  class API fact
+  class REDIS,PG verb
+  class HOST port
+  class PROXY,USER plain</script><p class="figure-note">The queue is only needed with more than one replica. The embedding model runs inside each API process.</p>
+
+      <h2 id="decisions">Design decisions</h2>
+      <div class="decisions">
+        <div class="decision"><h3>Verbatim first</h3><p>A summary loses the detail you need later, so the words are kept and searched directly. Facts sit on top because verbatim text alone cannot say which of two statements is current. This follows the framing of MemPalace, which stores conversations verbatim and retrieves without a model.</p></div>
+        <div class="decision"><h3>Rules before models</h3><p>Plain statements are decided by rules at zero token cost. A model is consulted only for free text near a stored fact. The honest cost is paraphrased updates, which rules cannot catch: 0.00 on that category, resolved when a model is present.</p></div>
+        <div class="decision"><h3>Exact search, not an approximate index</h3><p>With tenant, subject and validity filters an approximate index can silently drop true matches, which would hide a current fact. An exact scan costs latency instead: 233 ms p95 at 100k vectors, 333 ms at 200k.</p></div>
+        <div class="decision"><h3>One transaction per change</h3><p>Inserting a fact, linking it and closing the old one is one transaction. So is forgetting a memory with its source text. A crash never leaves a half-superseded or half-forgotten state.</p></div>
+        <div class="decision"><h3>Thresholds measured on real embeddings</h3><p>A toy embedder hid two mistakes. With MiniLM, “Budget is 50k” against “Budget is 80k” scored 0.75, below the first neighbour threshold of 0.80, so updates would have stacked. The thresholds are now 0.40 and 0.30, measured, and documented as tied to that embedder.</p></div>
+        <div class="decision"><h3>Everything swappable, and proven so</h3><p>Ports for model, embedder, store, queue, auth and parser, chosen in configuration. Contract suites any adapter must pass. A test fails if core code imports an adapter or a vendor SDK.</p></div>
+      </div>
+
+      <h2 id="measurements">Measurements</h2>
+      <p>Local MiniLM embeddings, no language model in any of these runs. The datasets are synthetic and template-based, so read them as regression checks, not as claims about your data.</p>
+      <p class="chart-title">Search latency, one subject, exact scan</p>
+      <p class="chart-sub">p95 including query embedding. The line marks the 300 ms target.</p>
+      <div class="chart"><div class="bar-row"><span>100k vectors</span><div class="track"><i class="mark" style="left:75.0%"></i><div class="fill teal" style="width:58.25%"></div></div><b>233 ms</b></div>
+<div class="bar-row"><span>200k vectors</span><div class="track"><i class="mark" style="left:75.0%"></i><div class="fill pink" style="width:83.25%"></div></div><b>333 ms</b></div></div>
+      <p class="chart-title">Messier chat, 60 conversations, no model</p>
+      <p class="chart-sub">Pass rate by category. Identical on the offline hash embedder and on MiniLM.</p>
+      <div class="chart"><div class="bar-row"><span>First-person preference</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>Correction (“Actually…”)</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>Compound sentence</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>Fact buried in chatter</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>Opposite preferences</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>Paraphrased update</span><div class="track"><div class="fill pink zero" style="width:0%"></div></div><b>0.00</b></div></div>
+      <p class="figure-note">The clean set (240 conversations) scores 1.00 on recall@5 and on correct-after-update with 0 stale leaks. Its abstention on near-domain probes is 0.00: a query like “churn of campq41” beside ad metrics scores about 0.5, the same as a vague genuine question, so no similarity cut separates them. The model-driven paths are covered by tests with scripted answers and have not been run against a live provider. Latency was measured on a laptop with Postgres in Docker.</p>
+    </main>
+  </div>
+
+  <footer class="site">
+    <div class="container">
+      <span class="grow"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"><img src="assets/logo-light.svg" alt="Memaso" width="120" height="24"></picture></span>
+      <a href="./">Home</a><a href="docs.html">Docs</a><a href="https://github.com/prathameshvenxr/memaso">GitHub</a>
+      <span>Set in Bricolage Grotesque and IBM Plex Mono, both under the SIL Open Font License.</span>
+    </div>
+  </footer>
+
+  <script src="assets/app.js" defer></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+    const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const light = { primaryColor: "#EFEBFF", primaryBorderColor: "#6A4CFF", primaryTextColor: "#1A1630", secondaryColor: "#E3F5F2",
+      tertiaryColor: "#F6F5FB", lineColor: "#8A86A6", clusterBkg: "#F6F5FB", clusterBorder: "#B3AFC6", titleColor: "#1A1630",
+      edgeLabelBackground: "#FAF9FF", actorBkg: "#EFEBFF", actorBorder: "#6A4CFF", actorTextColor: "#1A1630", actorLineColor: "#8A86A6",
+      signalColor: "#6B6785", signalTextColor: "#6B6785", labelBoxBkgColor: "#EFEBFF", labelBoxBorderColor: "#6A4CFF", labelTextColor: "#1A1630",
+      loopTextColor: "#6B6785", noteBkgColor: "#FFE9F1", noteBorderColor: "#F0397A", noteTextColor: "#1A1630", sequenceNumberColor: "#FFFFFF" };
+    const night = { primaryColor: "#261E47", primaryBorderColor: "#9B87FF", primaryTextColor: "#F4F2FF", secondaryColor: "#12343A",
+      tertiaryColor: "#1B1533", lineColor: "#8F89B3", clusterBkg: "#17122B", clusterBorder: "#3A3260", titleColor: "#F4F2FF",
+      edgeLabelBackground: "#0F0B1E", actorBkg: "#261E47", actorBorder: "#9B87FF", actorTextColor: "#F4F2FF", actorLineColor: "#8F89B3",
+      signalColor: "#A29DC2", signalTextColor: "#A29DC2", labelBoxBkgColor: "#261E47", labelBoxBorderColor: "#9B87FF", labelTextColor: "#F4F2FF",
+      loopTextColor: "#A29DC2", noteBkgColor: "#3A1830", noteBorderColor: "#FF5C93", noteTextColor: "#F4F2FF", sequenceNumberColor: "#0F0B1E" };
+    await document.fonts.ready;
+    mermaid.initialize({ startOnLoad: false, theme: "base", securityLevel: "strict", flowchart: { useMaxWidth: true, htmlLabels: true }, sequence: { useMaxWidth: true }, er: { useMaxWidth: true }, themeVariables: { fontFamily: '"Bricolage Grotesque", ui-sans-serif, sans-serif', ...(dark ? night : light) } });
+    for (const el of document.querySelectorAll("script.mmd")) {
+      const target = document.getElementById(el.dataset.target);
+      try {
+        const { svg } = await mermaid.render("g" + el.dataset.target, el.textContent);
+        target.innerHTML = svg; target.classList.remove("loading");
+        const el2 = target.querySelector("svg"), nat = el2.viewBox.baseVal.width;
+        target.tabIndex = 0; target.setAttribute("role", "button"); target.setAttribute("aria-label", "Diagram. Press Enter to enlarge.");
+        const toggle = () => {{
+          const on = target.classList.toggle("zoom");
+          el2.style.width = on ? nat + "px" : ""; el2.style.maxWidth = on ? "none" : "";
+          document.body.style.overflow = on ? "hidden" : "";
+        }};
+        target.addEventListener("click", toggle);
+        target.addEventListener("keydown", (e) => {{ if (e.key === "Enter" || e.key === " ") {{ e.preventDefault(); toggle(); }} if (e.key === "Escape" && target.classList.contains("zoom")) toggle(); }});
+      } catch (e) { target.textContent = "This diagram could not be drawn in your browser."; }
+    }
+  </script>
+</body>
+</html>
