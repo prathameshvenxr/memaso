@@ -130,7 +130,10 @@ async def process(c, job: dict) -> None:
             for older in await c.docs.pending_before(tenant, doc.scope.subject, doc.created_at, doc.id):
                 prev = await c.docs.get(tenant, older)
                 if prev is not None and prev.status != DocStatus.indexed:
-                    await _run(c, tenant, prev)
+                    try:
+                        await _run(c, tenant, prev)
+                    except Exception:  # noqa: BLE001 - it keeps its own retries; valid_from ordering fixes the rest
+                        log.warning("older document %s could not be processed yet; continuing with %s", prev.id, doc.id)
             doc = await c.docs.get(tenant, job["doc_id"])  # re-read: another worker may have finished it
             if doc is None or doc.status == DocStatus.indexed:
                 return

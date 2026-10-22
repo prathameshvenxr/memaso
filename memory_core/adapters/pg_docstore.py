@@ -48,10 +48,14 @@ class PgDocStore:
             return int(r.split()[-1])
 
     async def pending_before(self, tenant: str, subject: str, created_at, exclude_id: str) -> list[str]:
+        """Older unfinished documents of the subject, oldest first. Order is (observed time, arrival sequence), so
+        documents sharing a timestamp are still ordered."""
         async with self.pg.tx(tenant) as c:
-            rows = await c.fetch("SELECT id FROM documents WHERE tenant=$1 AND subject=$2 AND id <> $3 "
-                                 "AND status IN ('queued','extracting') AND created_at < $4 "
-                                 "ORDER BY created_at, id", tenant, subject, exclude_id, created_at)
+            rows = await c.fetch(
+                "SELECT d.id FROM documents d JOIN documents me ON me.id = $3 AND me.tenant = $1 "
+                "WHERE d.tenant=$1 AND d.subject=$2 AND d.id <> $3 AND d.status IN ('queued','extracting') "
+                "AND (d.created_at, d.seq) < (me.created_at, me.seq) ORDER BY d.created_at, d.seq",
+                tenant, subject, exclude_id)
         return [r["id"] for r in rows]
 
     async def redact(self, tenant: str, doc_ids: list[str], text: str) -> int:
@@ -65,7 +69,7 @@ class PgDocStore:
     async def latest(self, tenant: str, subject: str) -> str | None:
         async with self.pg.tx(tenant) as c:
             return await c.fetchval("SELECT id FROM documents WHERE tenant=$1 AND subject=$2 "
-                                    "ORDER BY created_at DESC, id DESC LIMIT 1", tenant, subject)
+                                    "ORDER BY created_at DESC, seq DESC LIMIT 1", tenant, subject)
 
     async def pending(self, tenant: str) -> list[str]:
         async with self.pg.tx(tenant) as c:

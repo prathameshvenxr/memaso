@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from importlib import import_module
 
+from . import tokens
 from .config import Config
 from .container import Container
 from .metering import MeteredEmbedder, MeteredLLM
@@ -85,6 +86,8 @@ def _store(cfg: dict, dim: int):
 def build(cfg: Config, llm=None) -> Container:
     """`llm`: the host application's model call. When given, memory uses the app's own model; otherwise the
     adapter named in config is used, and `none` means no model at all (rules and verbatim storage only)."""
+    if cfg.retrieval.get("token_counter"):  # "package.module:function(text) -> int"
+        tokens.set_counter(_plugin(cfg.retrieval["token_counter"]))
     inner = _embedder(cfg.embedder)
     store = _store(cfg.store, inner.dim)
     host = llm is not None or cfg.llm["adapter"] == "host"

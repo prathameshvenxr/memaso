@@ -20,14 +20,7 @@ async def hard_delete(c, tenant: str, *, memory_id: str | None = None, doc_id: s
         raise ValueError("choose exactly one of memory_id, doc_id, subject, everything")
     counts = {"memories": 0, "documents": 0}
     if memory_id:
-        m = await c.mems.get(tenant, memory_id)
-        counts["memories"] = await c.mems.delete_where(tenant, memory_id=memory_id)
-        # the raw source text of a forgotten memory must not outlive it
-        counts["documents"] = await c.docs.delete_orphans(tenant, m.source_doc_ids if m else [])
-        if m is not None:  # a source document that survives (it backs other facts) must not keep this fact's words
-            await c.docs.redact(tenant, m.source_doc_ids, m.text)
-            if c.chunks is not None:
-                await c.chunks.redact(tenant, m.source_doc_ids, m.text)
+        counts = await c.mems.forget(tenant, memory_id)  # one atomic store operation
     elif doc_id:
         d = await c.docs.get(tenant, doc_id)
         async with (c.lock(tenant, d.scope.subject) if d else _nolock()):  # no ingest between the two steps

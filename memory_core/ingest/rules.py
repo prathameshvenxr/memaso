@@ -6,12 +6,14 @@ import re
 
 from ..types import Candidate, Kind
 
-ROLE = re.compile(r"^(user|assistant|system|tool):\s*", re.I)
+ROLE = re.compile(r"^(user|human|assistant|ai|system|tool|developer|function):\s*", re.I)
+SPEAKER = {"human": "user", "ai": "assistant"}
 SENT = re.compile(r"(?<=[.!?])\s+")
 PREF_VERB = r"(?:prefers?|likes?|dislikes?|hates?|wants?)"
 KEY = re.compile(rf"^(?P<k>.{{1,80}}?)\s+(?:(?P<be>is|are|was|were|will be|should be|must be|set to|=)|(?P<pv>{PREF_VERB}))\s+(?P<v>.{{1,120}})$", re.I)
 MARKERS = re.compile(r"^(?:(?:actually|so|ok|okay|well|now|update|also|and|but|then|btw|fyi|note|anyway)\b[,:]?\s+)+", re.I)
-COMPOUND = re.compile(r"(?:;|,?\s+(?:and|but)\s+).*\b(?:is|are|was|were|prefers?|likes?|dislikes?|hates?|wants?)\b", re.I)
+COMPOUND = re.compile(r"(?:[;,]|\s+(?:and|but|while|plus|&)\s+).*\b(?:is|are|was|were|prefers?|likes?|dislikes?|hates?|wants?)\b", re.I)
+PRONOUNS = {"it", "this", "that", "there", "he", "she", "they", "you"}
 
 
 def strip_markers(s: str) -> str:
@@ -63,7 +65,12 @@ def key_of(text: str) -> tuple[str, str] | None:
     m = KEY.match(strip_markers(text).rstrip(".!?"))
     if not m:
         return None
+    if (m["be"] or "").lower() in ("was", "were"):  # history is not a current attribute
+        return None
     k = subject_of(m["k"])
+    toks = key_tokens(k)
+    if not m["pv"] and (k == "user" or not toks or toks <= PRONOUNS):  # "we are", "it is", "this is": no real subject
+        return None
     if m["pv"]:
         k += " " + re.sub(r"s$", "", m["pv"].lower())
     return k, re.sub(r"\s+", " ", m["v"].lower()).strip()
@@ -75,7 +82,7 @@ def extract_rules(text: str) -> list[Candidate]:
     for line in text.splitlines():
         role = ROLE.match(line)
         if role:
-            speaker = role.group(1).lower()
+            speaker = SPEAKER.get(role.group(1).lower(), role.group(1).lower())
         if speaker != "user":  # only what the person said; an assistant/tool message's later lines stay theirs
             continue
         for s in SENT.split(ROLE.sub("", line).strip()):
@@ -85,6 +92,8 @@ def extract_rules(text: str) -> list[Candidate]:
             if not (6 <= len(s) <= 200) or HEDGE.search(s):
                 continue
             m = KEY.match(s)
+            if m and (m["be"] or "").lower() in ("was", "were"):  # a past-tense remark stays verbatim-only
+                continue
             if m and COMPOUND.search(m["v"]):  # "X is 1 and Y is 2": two facts in one clause; leave it verbatim-only
                 continue
             if m and m["pv"]:

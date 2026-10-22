@@ -10,5 +10,4 @@ RUN useradd -r -m -u 10001 memaso && mkdir -p /data/models && chown -R memaso /d
 ENV HF_HOME=/data/models/hf FASTEMBED_CACHE_PATH=/data/models
 USER memaso
 EXPOSE 8080
-# migrate is idempotent, so every replica can run it on start
-CMD ["sh", "-c", "python -m memory_core migrate && python -m memory_core serve --host 0.0.0.0 --port 8080"]
+CMD ["python", "-m", "memory_core", "serve", "--host", "0.0.0.0", "--port", "8080"]

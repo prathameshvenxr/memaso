@@ -1,32 +1,50 @@
 # docker compose up -d                                    -> Postgres + API, no model and no API key needed
 # MEMASO_QUEUE=redis docker compose --profile scale up -d --scale api=3   -> Redis queue + several API replicas
+# Admin tasks (the API container holds no admin credentials):
+#   docker compose run --rm migrate python -m memory_core create-tenant acme
+#   docker compose run --rm migrate python -m memory_core create-key acme --subject alice
+# Set real passwords in a .env file: MEMASO_DB_ADMIN_PASSWORD and MEMASO_APP_PASSWORD (defaults are for local dev).
+x-image: &image
+  build:
+    context: .
+    args:
+      EXTRAS: "[fastembed,redis]"
+  image: memaso:local
+
 services:
   db:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_PASSWORD: memaso_admin
+      POSTGRES_PASSWORD: ${MEMASO_DB_ADMIN_PASSWORD:-memaso_admin}
       POSTGRES_DB: memaso
+      MEMASO_APP_PASSWORD: ${MEMASO_APP_PASSWORD:-memaso_app}
     ports: ["127.0.0.1:54329:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./docker/initdb.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      - ./docker/initdb.sh:/docker-entrypoint-initdb.d/00-init.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h localhost -U postgres -d memaso"]
       interval: 2s
       retries: 30
 
-  api:
-    build:
-      context: .
-      args:
-        EXTRAS: "[fastembed,redis]"
+  migrate:            # one-shot: the only service that holds the admin database URL
+    <<: *image
     depends_on:
       db: {condition: service_healthy}
+    command: ["python", "-m", "memory_core", "migrate"]
+    environment:
+      MEMASO__STORE__ADMIN_DSN: postgresql://postgres:${MEMASO_DB_ADMIN_PASSWORD:-memaso_admin}@db:5432/memaso
+    restart: "no"
+
+  api:
+    <<: *image
+    depends_on:
+      db: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     ports: ["8080"]            # random host port per replica; put a reverse proxy in front when scaling
     volumes: [models:/data/models]
     environment:
-      MEMASO__STORE__DSN: postgresql://memaso_app:memaso_app@db:5432/memaso
-      MEMASO__STORE__ADMIN_DSN: postgresql://postgres:memaso_admin@db:5432/memaso
+      MEMASO__STORE__DSN: postgresql://memaso_app:${MEMASO_APP_PASSWORD:-memaso_app}@db:5432/memaso
       FASTEMBED_CACHE_PATH: /data/models
       # Free by default: local ONNX embeddings, verbatim storage, rules for facts, no LLM at all.
       MEMASO__EMBEDDER__ADAPTER: ${MEMASO_EMBEDDER:-fastembed}

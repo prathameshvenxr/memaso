@@ -29,7 +29,7 @@ def main() -> None:
     from . import migrate as m
 
     if a.cmd == "migrate":
-        asyncio.run(m.migrate(admin))
+        asyncio.run(m.migrate(admin, cfg.store.get("app_role", "memaso_app")))
         print("migrated")
     elif a.cmd == "create-tenant":
         asyncio.run(m.create_tenant(admin, a.tenant, a.budget))

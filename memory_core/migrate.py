@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from importlib import resources
 
@@ -10,7 +11,7 @@ import asyncpg
 SERVER_SETTINGS = {"search_path": "memaso,public"}  # our tables live in schema memaso; vector stays in public
 
 
-async def migrate(admin_dsn: str) -> None:
+async def migrate(admin_dsn: str, app_role: str = "memaso_app") -> None:
     """Creates schema `memaso` and everything in it. Never touches other schemas, so it can share a database
     with an application (v3) that has its own `memories`, `documents` and `usage` tables."""
     conn = await asyncpg.connect(admin_dsn)  # plain connection: the extension and schema are created first
@@ -28,8 +29,21 @@ async def migrate(admin_dsn: str) -> None:
             async with conn.transaction():
                 await conn.execute(f.read_text())
                 await conn.execute("INSERT INTO schema_migrations VALUES ($1)", f.name)
+        await conn.execute(grants_sql(app_role))  # every run: a role created later, or renamed, still gets access
     finally:
         await conn.close()
+
+
+def grants_sql(role: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", role):
+        raise ValueError("app role must be a plain identifier")
+    return f"""DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN
+  GRANT USAGE ON SCHEMA memaso TO {role};
+  GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA memaso TO {role};
+  REVOKE INSERT, UPDATE, DELETE ON memaso.tenants, memaso.api_keys FROM {role};
+  REVOKE ALL ON memaso.schema_migrations FROM {role};
+  GRANT USAGE ON ALL SEQUENCES IN SCHEMA memaso TO {role};
+END IF; END $$;"""
 
 
 async def reset(admin_dsn: str) -> None:

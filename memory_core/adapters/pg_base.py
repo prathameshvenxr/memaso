@@ -65,4 +65,6 @@ def redaction_pattern(text: str) -> str:
     """A Postgres ARE that matches `text` ignoring case and whitespace differences, with punctuation escaped."""
     import re
 
-    return r"\s+".join(re.sub(r"([^\w])", r"\\\1", tok) for tok in text.split())
+    esc = lambda tok: re.sub(r"([\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e])", r"\\\1", tok)  # ASCII punctuation only
+    # boundaries: "CPA is 42" must not match inside "CPA is 420" or "CPA is 4.5"
+    return r"(?<!\w)" + r"\s+".join(esc(t) for t in text.split()) + r"(?!\w|[.,][0-9])"

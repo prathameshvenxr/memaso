@@ -82,8 +82,8 @@ class PgChunkStore:
         async with self.pg.tx(tenant) as c:
             r = await c.execute(
                 "INSERT INTO memory_chunks(memory_id, chunk_id, tenant) SELECT $1, id, tenant FROM chunks "
-                "WHERE tenant=$2 AND document_id=$3 AND strpos(lower(text), lower($4)) > 0 ON CONFLICT DO NOTHING",
-                memory_id, tenant, document_id, fact_text)
+                "WHERE tenant=$2 AND document_id=$3 AND text ~* $4 ON CONFLICT DO NOTHING",
+                memory_id, tenant, document_id, redaction_pattern(fact_text))
             n = int(r.split()[-1])
             if n == 0 and vector is not None and model_id is not None:
                 self._check(vector)

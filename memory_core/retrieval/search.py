@@ -15,7 +15,7 @@ from .pack import pack
 def redact_spans(text: str, spans: list[str]) -> str | None:
     """Replace each superseded fact's words with [superseded]; None when nothing meaningful is left."""
     for span in spans:
-        pattern = r"\s+".join(re.escape(tok) for tok in span.split())
+        pattern = r"(?<!\w)" + r"\s+".join(re.escape(tok) for tok in span.split()) + r"(?!\w|[.,]\d)"
         text = re.sub(pattern, "[superseded]", text, flags=re.I) if pattern else text
     rest = re.sub(r"\[superseded\]|user:|assistant:|\W+", "", text, flags=re.I)
     return text if len(rest) >= 8 else None
@@ -30,6 +30,7 @@ async def search(c, scope: Scope, query: str, k: int = 10, token_budget: int = 1
     if as_of is not None and as_of.tzinfo is None:
         as_of = as_of.replace(tzinfo=UTC)  # a naive timestamp means UTC
     f = dict(filters or {})
+    f.pop("container_is", None)  # internal-only: callers cannot pass it
     f["include_history"] = include_history
     token = current_tenant.set(scope.tenant)
     try:

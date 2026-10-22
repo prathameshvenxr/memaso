@@ -82,3 +82,11 @@ async def test_eval_on_real_embeddings_with_no_model(real):
     r = await run_eval(real, "tests/eval/dataset.jsonl")
     print("REAL EMBEDDER EVAL", r)
     assert r["recall_at_5"] >= 0.85 and r["correct_after_update"] >= 0.90 and r["stale_leak"] == 0, r
+
+
+async def test_messy_chat_eval_on_real_embeddings_with_no_model(real):
+    from tests.eval.run_eval import run_by_type
+    r = await run_by_type(real, "tests/eval/dataset_messy.jsonl")
+    print("MESSY EVAL (real MiniLM, no model)", {k: round(v, 2) for k, v in sorted(r.items())})
+    for t in ("first_person_preference", "marker_update", "compound_sentence", "buried_fact", "opposite_preference"):
+        assert r[t] >= 0.9, (t, r)

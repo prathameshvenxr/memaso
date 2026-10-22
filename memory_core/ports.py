@@ -59,6 +59,11 @@ class MemoryStore(Protocol):
         reopen: bool = False
     ) -> int: ...
     async def touch(self, tenant: str, ids: list[str]) -> None: ...
+    async def forget(self, tenant: str, memory_id: str, reopen: bool = False) -> dict:
+        """Atomically remove one memory with its source text: the chunks its words were found in, its links, the
+        source documents nothing else cites, and its words inside surviving documents and chunks.
+        Returns {"memories": n, "documents": n}. One transaction, so a crash leaves nothing half-forgotten."""
+
 
 
 class VectorStore(Protocol):

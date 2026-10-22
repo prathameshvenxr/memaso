@@ -16,7 +16,7 @@ def render(h: Hit | ChunkHit, section: str | None = None) -> str:
                 f"{escape(k.text, quote=False)}</chunk>")
     m = h.memory
     sec = f' section="{section}"' if section else ""
-    return (f'<memory id="{escape(m.id)}" kind="{m.kind.value}" valid_from="{m.valid_from.date().isoformat()}"{sec}>'
+    return (f'<memory id="{escape(m.id[:8])}" kind="{m.kind.value}" valid_from="{m.valid_from.date().isoformat()}"{sec}>'
             f"{escape(m.text, quote=False)}</memory>")
 
 

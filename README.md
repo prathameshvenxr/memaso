@@ -24,7 +24,7 @@
 <p align="center">
   <img alt="python 3.12" src="https://img.shields.io/badge/python-3.12-1A1630?style=flat-square">
   <img alt="postgres + pgvector" src="https://img.shields.io/badge/postgres-pgvector-6A4CFF?style=flat-square">
-  <img alt="170 tests" src="https://img.shields.io/badge/tests-170_passing-0F8F83?style=flat-square">
+  <img alt="201 tests" src="https://img.shields.io/badge/tests-201_passing-0F8F83?style=flat-square">
   <img alt="no model required" src="https://img.shields.io/badge/LLM-optional-F0397A?style=flat-square">
 </p>
 
@@ -194,8 +194,8 @@ A chunk whose words were superseded stays searchable: only the superseded span i
 
 ```bash
 docker compose up -d                    # Postgres + pgvector, and the API. No model, no key.
-docker compose exec api python -m memory_core create-tenant acme
-docker compose exec api python -m memory_core create-key acme --subject alice   # printed once
+docker compose run --rm migrate python -m memory_core create-tenant acme
+docker compose run --rm migrate python -m memory_core create-key acme --subject alice   # printed once
 docker compose port api 8080            # REST here; OpenAPI at /openapi.json
 ```
 
@@ -274,8 +274,12 @@ flowchart LR
 MEMASO_QUEUE=redis docker compose --profile scale up -d --scale api=3   # Redis queue + three replicas
 ```
 
+- **No admin credentials in the API.** A one-shot `migrate` service runs the migrations and is the only container that
+  holds the admin database URL; the API connects as the unprivileged app role. Set real passwords in a `.env` file
+  (`MEMASO_DB_ADMIN_PASSWORD`, `MEMASO_APP_PASSWORD`); the defaults are for local development, and Postgres is
+  published on 127.0.0.1 only.
 - **Stateless API.** Replicas share Postgres and the queue. A per-subject advisory lock keeps one subject's documents ordered and safe across workers.
-- **Without Docker.** `python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"`, start a Postgres with `pgvector` and an unprivileged `memaso_app` role (`docker/initdb.sql`), copy `config.example.yaml` to `config.yaml`, then `python -m memory_core migrate | create-tenant | create-key | serve`.
+- **Without Docker.** `python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"`, start a Postgres with `pgvector` and an unprivileged `memaso_app` role (`docker/initdb.sh`), copy `config.example.yaml` to `config.yaml`, then `python -m memory_core migrate | create-tenant | create-key | serve`.
 - **MCP.** `MEMASO_API_KEY=mc_... MEMASO_SUBJECT=alice python -m memory_core mcp`.
 - **LangGraph.** `memory_core.integrations.langgraph.memory_hook` and `remember_tool`.
 
@@ -289,7 +293,8 @@ MEMASO_QUEUE=redis docker compose --profile scale up -d --scale api=3   # Redis 
 | Queue | `inproc` · `redis` | `queue.adapter` |
 | Auth · Parser | `apikey` · `text` | `auth.adapter` · `parser.adapter` |
 
-Edit `config.yaml`, or set `MEMASO__LLM__ADAPTER=openai` style variables. A third-party adapter plugs in as `adapter: "package.module:factory"` with no change to this repository. To certify one, subclass the suites in `tests/contract/base.py`. After an embedder change, ingestion re-embeds old data before judging new data, and vectors are tagged with the embedder's `model_id` so old and new never mix.
+Edit `config.yaml`, or set `MEMASO__LLM__ADAPTER=openai` style variables. Token counting is pluggable too: `retrieval.token_counter: "package.module:function"` (text in, count out) swaps the
+built-in estimate for a real tokenizer such as the host app's own. A third-party adapter plugs in as `adapter: "package.module:factory"` with no change to this repository. To certify one, subclass the suites in `tests/contract/base.py`. After an embedder change, ingestion re-embeds old data before judging new data, and vectors are tagged with the embedder's `model_id` so old and new never mix.
 
 ```yaml
 llm:      {adapter: none}                 # or host / anthropic / openai / compat
@@ -360,18 +365,52 @@ Everything lives in the `memaso` schema (the `vector` extension in `public`), so
 ```bash
 .venv/bin/pytest -q            # needs the Postgres container; fully offline (fake LLM, hash embedder)
 .venv/bin/pytest -m live       # real services: real embedder, Redis, contract suites for real adapters
+python -m tests.bench.bench_scale 100000   # search latency at scale (see below)
 ```
 
-170 offline tests, including raw-SQL row-level-security checks, a cross-tenant fuzz, concurrency tests and regression tests for every issue found in five independent review rounds. `tests/acceptance/` is frozen: its hashes are in `.frozen` and the builder never edits those files to make them pass.
+Offline tests include raw-SQL row-level-security checks, a cross-tenant fuzz, concurrency tests, contract suites for
+every port (embedder, LLM, queue, store, auth) and a regression test for every issue found in the independent review
+rounds. CI (`.github/workflows/ci.yml`) runs them against `pgvector` on every push. `tests/acceptance/` is frozen: its
+hashes are in `.frozen`, and CI fails if those files change.
 
-The eval is 240 synthetic, template-based ads conversations (`tests/eval/`). Treat it as a regression check, not a claim about your data.
+**Eval.** Both datasets are synthetic and template-based, so treat them as regression checks, not claims about your data.
 
-| adapters | recall@5 | correct after update | abstention (near-domain probes) | stale leaks |
-|---|---|---|---|---|
-| fake LLM + hash embedder, model-based facts (offline, frozen test) | 1.00 | 1.00 | 0.95 | 0 |
-| **no LLM**, rules + verbatim, real local MiniLM (`fastembed`) | 1.00 | 1.00 | 0.00 | 0 |
+| dataset, adapters | recall@5 | correct after update | stale leaks |
+|---|---|---|---|
+| clean, 240 items, fake LLM + hash embedder (frozen test) | 1.00 | 1.00 | 0 |
+| clean, 240 items, **no LLM**, real local MiniLM | 1.00 | 1.00 | 0 |
 
-The 0.00 is a measured limit, not a bug: a query like "churn of campq41" beside stored ad metrics scores about 0.5 against MiniLM, the same as a vague real question ("how much are we spending per month" scores 0.39), so no similarity cut separates them. The floor (`retrieval.min_similarity: 0.30`) does abstain on off-domain questions (cricket, weather: 0.05 to 0.22). For "close but not stored" the agent decides from the returned text, as with any retrieval system.
+The clean set's abstention on near-domain probes is 0.00 with MiniLM: a query like "churn of campq41" beside stored ad
+metrics scores about 0.5, the same as a vague real question, so no similarity cut separates them. The floor
+(`retrieval.min_similarity: 0.30`) does abstain on off-domain questions (cricket, weather: 0.05 to 0.22). For "close but
+not stored" the agent decides from the returned text, as with any retrieval system.
+
+**Messier chat, 60 items, no LLM** (`tests/eval/dataset_messy.jsonl`: first-person phrasing, "actually..." corrections,
+compound sentences, buried facts, opposite preferences, paraphrased updates). Identical on the hash embedder and on MiniLM:
+
+| category | pass rate |
+|---|---|
+| first-person preference ("I prefer weekly reports") | 1.00 |
+| correction with a marker ("Actually the budget is 80k") | 1.00 |
+| compound sentence ("budget is 80k and the CPA is 420") | 1.00 |
+| fact buried in chatter | 1.00 |
+| opposite preferences ("I hate X" then "I like X") | 1.00 |
+| **paraphrased update** ("We've raised our monthly budget to 80k") | **0.00** |
+
+The last row is a real limit: rules cannot tell that "monthly budget" is the same attribute as "budget", so the old
+value stays visible. A model resolves it (the judge is asked when subjects overlap): pass `llm=` or set `llm.adapter`.
+That model path is covered by tests with scripted answers, and has not been run against a live LLM.
+
+**Scale.** One subject with facts plus chunks, 384-dimension vectors, exact scan, Postgres 16 in Docker on a laptop:
+
+| rows | vectors scanned per query | `search()` p50 / p95 (query embedding included) | store queries only p95 |
+|---|---|---|---|
+| 50k facts + 50k chunks | 100k | 167 / 233 ms | 202 ms |
+| 100k facts + 100k chunks | 200k | 213 / 333 ms | 275 ms |
+
+Latency grows about linearly. The PRD target (p95 under 300 ms) holds to roughly 150k vectors for one subject. Typical
+subjects hold far fewer; a tenant with many subjects is filtered down to one subject per query. No ANN index is used on
+purpose: with tenant, subject and validity filters an approximate index can silently drop matches, so recall stays exact.
 
 ## Guarantees and known limits
 
@@ -384,19 +423,23 @@ The 0.00 is a measured limit, not a bug: a query like "churn of campq41" beside 
   A fact stored for an account is visible only in that account. A subject-level scope (no container) sees both.
   Supersession only compares facts inside the same container, so "Budget is 50k" in account A and "Budget is 80k"
   in account B coexist.
-- Hard delete removes rows, embeddings, chunks and links in one cascade and returns a receipt. Forgetting a memory
-  deletes the chunk its words were found in and redacts those words from the source document and its other chunks
-  when they appear verbatim. A model's paraphrased fact cannot be matched textually: forget its document by id.
+- Hard delete removes rows, embeddings, chunks and links and returns a receipt. Forgetting one memory is a single
+  atomic transaction: it deletes the chunk its words were found in, any source document nothing else cites, and
+  redacts those words from surviving documents and chunks when they appear verbatim. A model's paraphrased fact cannot
+  be matched textually: forget its document by id. Removing a subject or a whole tenant deletes documents first, then
+  memories, so an ingest in flight cannot leave a memory behind; repeating the call finishes any interrupted wipe.
   Forgetting a value never brings back the older value it replaced. Audit rows hold ids only.
 - **Stale values in verbatim text.** When a fact is superseded, its exact words are replaced by `[superseded]` inside
   the chunk it came from in "current" search; the rest of the chunk stays. A chunk tied to a model's paraphrase retires
   whole. `include_history` and `as_of` show the original text.
 - Recalled text is escaped and wrapped in `<memory>` / `<chunk>` tags and labelled untrusted.
-- Vector search is an exact scan filtered by tenant, subject and model (add a per-model HNSW index past ~100k rows
-  per tenant). Full-text search is OR-of-words on an English config; the vector leg carries multilingual recall.
+- Vector search is an exact scan filtered by tenant, subject and model, so recall is exact; see Scale above for
+  latency (p95 under 300 ms to about 150k vectors per subject). Full-text search is OR-of-words on an English config;
+  the vector leg carries multilingual recall.
 - The rules extractor is conservative and English-only: plain "X is Y" statements and preferences ("prefers", "likes",
   "hates", "wants", and first-person "I ..."), from the user's own lines, without a leading "actually/so/ok". It skips
-  questions, hedges, and compound sentences ("X is 1 and Y is 2"), which stay verbatim-only. For richer facts use
+  questions, hedges, past-tense remarks ("CPA was 420 last month"), and compound or comma-joined sentences
+  ("X is 1 and Y is 2", "X is 1, Y is 2"), which stay verbatim-only. Vague subjects ("we are", "it is") never supersede one another. For richer facts use
   `remember` or `facts.extract: llm`. Two preferences about different things are never merged by rules; only an exact
   opposite (hates vs likes the same thing) is. Paraphrased subjects ("budget" vs "monthly budget") are ambiguous: with
   a model it decides, without one both facts stay.
@@ -404,15 +447,15 @@ The 0.00 is a measured limit, not a bug: a query like "churn of campq41" beside 
 - The in-process queue and rate limiter are per process; use the Redis queue (and a shared limiter) for replicas.
 
 **Open items (known, not fixed):**
-- Hard delete by memory id is several transactions; a crash between them can leave source text that a retry cannot
-  reach (delete by document id instead).
-- A failing older document is retried inline before a newer one and can delay it until it dead-letters.
-- The compose API container holds the admin database URL so it can migrate; split migration into a one-shot service for
-  production. Postgres is published on 127.0.0.1 only.
-- Token counts are an estimate (3 bytes per token); a real tokenizer can count `<memory id=...>` tags higher.
-- The store contract suite does not yet cover every store method (doc/subject deletes, redaction, usage records).
-- The eval is synthetic and template-based; "stale leaks 0" is a regression check, not evidence for real chat text.
-- The v3 tool shims were written from the white paper and have not been run against v3's code.
+- **Not run against v3.** The v3 tool shims and library-mode wiring were written from the white paper; v3's code was not
+  available, so they have never run inside the real backend.
+- **No live-LLM run.** The model paths (host `llm=`, `facts.extract: llm`, the judge for ambiguous cases) are covered by
+  tests with scripted answers and a rule-based fake; none has been exercised against a real provider.
+- **Evals are synthetic.** The datasets are template-based. They guard against regressions; they say little about real
+  chat text. Paraphrased updates need a model (0.00 without one, see above).
+- **Latency beyond ~150k vectors per subject** exceeds the 300 ms target, because search is an exact scan on purpose.
+- **English only** for the rules extractor and the full-text leg.
+- **No license file yet.** Choosing one is the owner's call.
 - Not built: entity/triple graph, entity-aware ranking boosts, file/URL ingestion, decay, rerank, inspector UI,
   v3 data migration, webhooks, TS SDK, LongMemEval-style runner.
 
@@ -428,8 +471,9 @@ memory_core/
   memory.py    library facade          mcp_server.py   MCP server         sdk.py   Python client
   integrations/  LangGraph hook and v3 shims
 assets/        logo and diagrams, regenerated by make_assets.py
+.github/       CI: the suite against pgvector, plus a check that the frozen tests are untouched
 docs/          PRD.md, PLAN.md, V3_ALIGNMENT.md
-tests/         unit, integration, contract, acceptance (frozen), eval
+tests/         unit, integration, contract, acceptance (frozen), eval, bench
 ```
 
 ## Credits

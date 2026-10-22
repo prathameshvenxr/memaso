@@ -190,6 +190,89 @@ class StoreContract:
         with pytest.raises(ValueError):
             await store.mems.insert(_mem("x"), [0.1, 0.2], "m")
 
+    # --- deletes, redaction, ordering, confidence
+    async def test_removing_by_document_keeps_memories_that_other_documents_still_cite(self, store):
+        d1, d2 = _doc(), _doc()
+        for d in (d1, d2):
+            await store.docs.put(d)
+        only, shared = _mem("budget is 50k", docs=[d1.id]), _mem("cpa is 420", docs=[d1.id, d2.id])
+        await store.mems.insert(only, self.vec(0), "m")
+        await store.mems.insert(shared, self.vec(1), "m")
+        assert await store.mems.delete_where("tenant-a", doc_id=d1.id) == 1
+        assert [m.text for m in await store.mems.list(A, 10, 0)] == ["cpa is 420"]
+
+    async def test_removing_by_subject_leaves_other_subjects_and_other_tenants(self, store):
+        other_subject = Scope("tenant-a", "other")
+        for scope, text in ((A, "mine"), (other_subject, "theirs"), (B, "another tenant")):
+            await store.mems.insert(_mem(text, scope), self.vec(0), "m")
+            await store.docs.put(_doc(scope))
+        assert await store.mems.delete_where("tenant-a", subject="u") == 1
+        assert await store.docs.delete_where("tenant-a", subject="u") == 1
+        assert [m.text for m in await store.mems.list(other_subject, 10, 0)] == ["theirs"]
+        assert [m.text for m in await store.mems.list(B, 10, 0)] == ["another tenant"]
+
+    async def test_redaction_ignores_case_and_spacing_and_only_touches_the_named_documents(self, store):
+        d, other = _doc(text="Budget is 50k, ok"), _doc(text="Budget is 50k elsewhere")
+        await store.docs.put(d)
+        await store.docs.put(other)
+        await store.chunks.insert_many([Chunk(id="r1", scope=A, document_id=d.id, position=0, text="the BUDGET   is 50K here",
+                                              observed_at=NOW)], [self.vec(2)], "m")
+        assert await store.docs.redact("tenant-a", [d.id], "budget  is 50k") == 1
+        assert await store.chunks.redact("tenant-a", [d.id], "budget  is 50k") == 1
+        assert (await store.docs.get("tenant-a", d.id)).content == "[removed], ok"
+        assert (await store.docs.get("tenant-a", other.id)).content == "Budget is 50k elsewhere"
+        assert (await store.chunks.get_many("tenant-a", ["r1"]))[0].text == "the [removed] here"
+
+    async def test_pending_before_lists_older_unfinished_documents_oldest_first(self, store):
+        t = lambda days: NOW - timedelta(days=days)
+        d3, d2, d1, done = _doc(when=t(1)), _doc(when=t(2)), _doc(when=t(3)), _doc(when=t(4))
+        for d in (d3, d2, d1, done):
+            await store.docs.put(d)
+        await store.docs.set_status("tenant-a", done.id, DocStatus.indexed)
+        assert await store.docs.pending_before("tenant-a", "u", d3.created_at, d3.id) == [d1.id, d2.id]
+        assert await store.docs.pending_before("tenant-b", "u", d3.created_at, d3.id) == []
+
+    async def test_confirming_a_fact_raises_confidence_and_adds_the_source(self, store):
+        d1, d2 = _doc(), _doc()
+        for d in (d1, d2):
+            await store.docs.put(d)
+        m = _mem("budget is 50k", docs=[d1.id])
+        m.confidence = 0.5
+        await store.mems.insert(m, self.vec(0), "m")
+        await store.mems.bump_confidence("tenant-a", m.id, d2.id)
+        got = await store.mems.get("tenant-a", m.id)
+        assert got.confidence > 0.5 and set(got.source_doc_ids) == {d1.id, d2.id}
+
+    async def test_forget_is_atomic_and_removes_the_source_text(self, store):
+        d = _doc(text="Budget is 50k. CPA is 420.")
+        await store.docs.put(d)
+        await store.chunks.insert_many([Chunk(id="f1", scope=A, document_id=d.id, position=0,
+                                              text="Budget is 50k. CPA is 420.", observed_at=NOW)], [self.vec(3)], "m")
+        budget, cpa = _mem("Budget is 50k", docs=[d.id]), _mem("CPA is 420", docs=[d.id])
+        for m, v in ((budget, 0), (cpa, 1)):
+            await store.mems.insert(m, self.vec(v), "m")
+        await store.chunks.link("tenant-a", budget.id, d.id, "Budget is 50k")
+        assert await store.mems.forget("tenant-b", budget.id) == {"memories": 0, "documents": 0}   # tenant wall
+        assert await store.mems.forget("tenant-a", "no-such-id") == {"memories": 0, "documents": 0}
+        assert await store.mems.forget("tenant-a", budget.id) == {"memories": 1, "documents": 0}   # doc still backs cpa
+        assert await store.chunks.get_many("tenant-a", ["f1"]) == []                                # linked chunk is gone
+        assert "50k" not in (await store.docs.get("tenant-a", d.id)).content
+        assert await store.mems.forget("tenant-a", cpa.id) == {"memories": 1, "documents": 1}      # now nothing cites it
+        assert await store.docs.get("tenant-a", d.id) is None
+
+    # --- Aux: audit, receipts, dead letters, usage (tenants and api keys are provisioned outside the port)
+    async def test_aux_records_are_tenant_scoped(self, store):
+        aux = store.aux
+        await aux.audit("tenant-a", "tester", "unit", "target-1", {"k": "v"})
+        await aux.receipt("tenant-a", "rcpt-1", {"subject": "u"}, {"memories": 2})
+        assert (await aux.get_receipt("tenant-a", "rcpt-1"))["counts"] == {"memories": 2}
+        assert await aux.get_receipt("tenant-b", "rcpt-1") is None
+        await aux.dead_letter("tenant-a", {"doc_id": "x"}, "ExtractionFailed")
+        await aux.add_usage("tenant-a", 40)
+        await aux.add_usage("tenant-a", 2)
+        assert await aux.month_usage("tenant-a") == 42 and await aux.month_usage("tenant-b") == 0
+        assert await aux.budget("no-such-tenant") is None
+
     # --- ChunkStore
     async def test_superseded_exact_facts_are_reported_as_spans_and_paraphrase_links_retire_the_chunk(self, store):
         d = _doc()

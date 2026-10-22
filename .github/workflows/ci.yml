@@ -1,0 +1,33 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: memaso_admin
+          POSTGRES_DB: memaso
+        ports: ["54329:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d memaso"
+          --health-interval 2s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Create the unprivileged app role
+        run: >-
+          PGPASSWORD=memaso_admin psql -h localhost -p 54329 -U postgres -d memaso
+          -c "CREATE ROLE memaso_app LOGIN PASSWORD 'memaso_app' NOSUPERUSER NOBYPASSRLS"
+      - run: pip install -e ".[dev]"
+      - name: Frozen acceptance tests are untouched
+        run: cd tests/acceptance && sha256sum -c .frozen
+      - run: pytest -q

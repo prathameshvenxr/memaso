@@ -5,7 +5,7 @@ import re
 from datetime import UTC, datetime
 
 from ..types import Kind, Memory, Scope
-from .pg_base import Pg, vec
+from .pg_base import Pg, redaction_pattern, vec
 
 _SELECT = """
 SELECT m.*,
@@ -208,6 +208,29 @@ class PgMemStore:
             else:
                 r = await c.execute("DELETE FROM memories WHERE tenant=$1", tenant)
             return int(r.split()[-1])
+
+    async def forget(self, tenant: str, memory_id: str, reopen: bool = False) -> dict:
+        async with self.pg.tx(tenant) as c:
+            row = await c.fetchrow("SELECT text FROM memories WHERE tenant=$1 AND id=$2", tenant, memory_id)
+            if row is None:
+                return {"memories": 0, "documents": 0}
+            docs = [r["document_id"] for r in await c.fetch(
+                "SELECT document_id FROM memory_sources WHERE tenant=$1 AND memory_id=$2", tenant, memory_id)]
+            if reopen:
+                await self._reopen(c, tenant, [memory_id])
+            await c.execute("DELETE FROM chunks WHERE tenant=$1 AND id IN "
+                            "(SELECT chunk_id FROM memory_chunks WHERE tenant=$1 AND memory_id=$2)", tenant, memory_id)
+            await c.execute("DELETE FROM memories WHERE tenant=$1 AND id=$2", tenant, memory_id)
+            gone = await c.execute(
+                "DELETE FROM documents d WHERE d.tenant=$1 AND d.id = ANY($2) AND NOT EXISTS "
+                "(SELECT 1 FROM memory_sources s WHERE s.document_id = d.id)", tenant, docs)
+            if docs and row["text"].strip():  # surviving documents (they back other facts) lose this fact's words
+                pattern = redaction_pattern(row["text"])
+                await c.execute("UPDATE documents SET content = regexp_replace(content, $3, '[removed]', 'gi') "
+                                "WHERE tenant=$1 AND id = ANY($2)", tenant, docs, pattern)
+                await c.execute("UPDATE chunks SET text = regexp_replace(text, $3, '[removed]', 'gi') "
+                                "WHERE tenant=$1 AND document_id = ANY($2)", tenant, docs, pattern)
+            return {"memories": 1, "documents": int(gone.split()[-1])}
 
     async def touch(self, tenant: str, ids: list[str]) -> None:
         if ids:

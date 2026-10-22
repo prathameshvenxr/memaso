@@ -48,3 +48,7 @@ def build_parser(**kw):
             return "parsed:" + data.decode()
 
     return DemoParser()
+
+
+def char_counter(text):
+    return len(text)  # for the "token counter is selectable by config" test
