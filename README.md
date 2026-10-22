@@ -15,7 +15,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
   <a href="#how-it-works">How it works</a> &nbsp;·&nbsp;
-  <a href="#use-it-inside-the-v3-backend">Library mode</a> &nbsp;·&nbsp;
+  <a href="#use-it-inside-your-agent-backend">Library mode</a> &nbsp;·&nbsp;
   <a href="#run-it-as-a-service">Service</a> &nbsp;·&nbsp;
   <a href="#swap-anything">Configuration</a> &nbsp;·&nbsp;
   <a href="#guarantees-and-known-limits">Limits</a>
@@ -41,7 +41,7 @@
 - **Recalls cheaply.** Search is embeddings plus full-text, fused, then packed to the token budget you give it. It makes no model call.
 - **Uses a model only where one helps.** Plain statements are read by rules. A model (your app's own, or one you configure) is asked only when a case is genuinely ambiguous.
 - **Stays inside the lines.** Row-level tenant isolation, account scoping, real deletion, and recalled text that is escaped and labelled as untrusted data.
-- **Fits the AdsGPT v3 backend.** Library mode runs in-process on v3's Postgres, in its own schema, with hooks for the run loop, compaction and the tool registry.
+- **Fits an existing backend.** Library mode runs in-process on your Postgres, in its own schema, with hooks for the run loop, context compaction and the tool registry.
 
 ## How it works
 
@@ -52,7 +52,7 @@
 flowchart LR
   subgraph clients[" Clients "]
     direction TB
-    LIB["Library<br/>Memory.create(cfg, llm=call_llm)"]
+    LIB["Library<br/>Memory.create(cfg, llm=my_llm)"]
     REST["REST + Python SDK"]
     MCP["MCP server<br/>4 tools"]
     LG["LangGraph hook<br/>remember / context"]
@@ -210,16 +210,16 @@ res = await m.search("what is the budget?")             # res.context goes into 
 
 The first start downloads a ~90 MB embedding model and caches it in a volume. Docker is optional: see [Run it as a service](#run-it-as-a-service).
 
-## Use it inside the v3 backend
+## Use it inside your agent backend
 
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"primaryColor":"#EFEBFF","primaryBorderColor":"#6A4CFF","primaryTextColor":"#1A1630","secondaryColor":"#E3F5F2","tertiaryColor":"#F6F5FB","lineColor":"#8A86A6","clusterBkg":"#F6F5FB","clusterBorder":"#B3AFC6","titleColor":"#1A1630","edgeLabelBackground":"#F6F5FB","actorBkg":"#EFEBFF","actorBorder":"#6A4CFF","actorTextColor":"#1A1630","actorLineColor":"#8A86A6","signalColor":"#8A86A6","signalTextColor":"#8A86A6","labelBoxBkgColor":"#EFEBFF","labelBoxBorderColor":"#6A4CFF","labelTextColor":"#1A1630","loopTextColor":"#8A86A6","noteBkgColor":"#FFE9F1","noteBorderColor":"#F0397A","noteTextColor":"#1A1630","sequenceNumberColor":"#FFFFFF"}}}%%
 sequenceDiagram
   autonumber
   participant U as User
-  participant R as v3 run (LangGraph)
+  participant R as your agent run (LangGraph)
   participant M as Memaso
-  participant L as call_llm (the app's own model)
+  participant L as my_llm (the app's own model)
   U->>R: question
   R->>M: context(scope, question, 1500)
   M-->>R: small ranked block, no model call
@@ -232,14 +232,14 @@ sequenceDiagram
   R->>M: ingest_turn(scope, messages)
   Note over M: stored verbatim, facts by rules, queued
   R-->>U: answer
-  Note over R,M: window past 55%: archive(turns) first
+  Note over R,M: window nearly full: archive(turns) first
 ```
 
 ```python
 from memory_core.memory import Memory
 from memory_core.types import Scope
 
-mem = await Memory.create("config.yaml", llm=call_llm)    # llm=None: no model at all
+mem = await Memory.create("config.yaml", llm=my_llm)    # llm=None: no model at all
 scope = Scope(tenant=team_id, subject=user_id, container=ad_account_id)
 
 block = await mem.context(scope, user_text, token_budget=1500)   # replaces "inject every memory"
@@ -248,7 +248,7 @@ await mem.ingest_turn(scope, messages)                           # after the ans
 await mem.archive(scope, old_turns)                              # before compaction summarises them
 ```
 
-`tenant` is the team, `subject` the user, `container` the ad account. A fact stored with no container is global and shows up in every account; an account fact stays in its account, and supersession only compares facts inside one account. `memory_core.integrations.v3` returns `remember` and `recall` tool specs shaped for v3's `@tool` decorator, plus a compaction hook. They were written from the white paper and have not been run against v3's code.
+`tenant` is the team, `subject` the user, `container` the ad account. A fact stored with no container is global and shows up in every account; an account fact stays in its account, and supersession only compares facts inside one account. `memory_core.integrations.agent_tools` returns `remember` and `recall` tool specs for a backend that registers tools as plain functions, plus a compaction hook. They were written against an assumed registry shape and have not been run inside a real backend.
 
 ## Run it as a service
 
@@ -259,7 +259,7 @@ flowchart LR
   PROXY --> API["api × N<br/>stateless<br/>local ONNX embedder"]
   API --> PG[("postgres 16 + pgvector<br/>schema memaso<br/>row-level security")]
   API --> REDIS[("redis<br/>job queue<br/>when replicas > 1")]
-  API -. "optional" .-> HOST["the app's own model<br/>call_llm"]
+  API -. "optional" .-> HOST["the app's own model<br/>my_llm"]
   classDef verb fill:#E3F5F2,stroke:#0F8F83,color:#1A1630
   classDef fact fill:#EFEBFF,stroke:#6A4CFF,color:#1A1630
   classDef port fill:#FFFFFF,stroke:#6B6785,stroke-dasharray:4 3,color:#1A1630
@@ -348,7 +348,7 @@ erDiagram
   }
 ```
 
-Everything lives in the `memaso` schema (the `vector` extension in `public`), so it can share a database with v3's own tables. Each memory also has `memory_links` (supersession history with the judge's reason) and `embeddings` (one vector per `model_id`). Operational tables, `audit_log`, `deletion_receipts`, `jobs_dead_letter` and `usage`, hold ids and counts, never memory text.
+Everything lives in the `memaso` schema (the `vector` extension in `public`), so it can share a database with your application's own tables. Each memory also has `memory_links` (supersession history with the judge's reason) and `embeddings` (one vector per `model_id`). Operational tables, `audit_log`, `deletion_receipts`, `jobs_dead_letter` and `usage`, hold ids and counts, never memory text.
 
 ## Where a model is used
 
@@ -415,7 +415,7 @@ purpose: with tenant, subject and validity filters an approximate index can sile
 ## Guarantees and known limits
 
 - **Own schema.** Everything lives in Postgres schema `memaso` (the `vector` extension in `public`), so it can share a
-  database with v3's own tables without a name clash. `migrate` never touches other schemas. The app role needs
+  database with your application's own tables without a name clash. `migrate` never touches other schemas. The app role needs
   `USAGE` on schema `memaso` (the migration grants it to a role named `memaso_app`).
 - Tenant isolation: row-level security on every data table, tenant taken only from the API key; startup refuses a
   database role that bypasses it.
@@ -447,8 +447,8 @@ purpose: with tenant, subject and validity filters an approximate index can sile
 - The in-process queue and rate limiter are per process; use the Redis queue (and a shared limiter) for replicas.
 
 **Open items (known, not fixed):**
-- **Not run against v3.** The v3 tool shims and library-mode wiring were written from the white paper; v3's code was not
-  available, so they have never run inside the real backend.
+- **Agent-tool shims never run in a real backend.** `integrations/agent_tools.py` was written against an assumed
+  tool-registry shape; check the field names against your own registry.
 - **No live-LLM run.** The model paths (host `llm=`, `facts.extract: llm`, the judge for ambiguous cases) are covered by
   tests with scripted answers and a rule-based fake; none has been exercised against a real provider.
 - **Evals are synthetic.** The datasets are template-based. They guard against regressions; they say little about real
@@ -457,7 +457,7 @@ purpose: with tenant, subject and validity filters an approximate index can sile
 - **English only** for the rules extractor and the full-text leg.
 - **No license file yet.** Choosing one is the owner's call.
 - Not built: entity/triple graph, entity-aware ranking boosts, file/URL ingestion, decay, rerank, inspector UI,
-  v3 data migration, webhooks, TS SDK, LongMemEval-style runner.
+  flat-table data migration, webhooks, TS SDK, LongMemEval-style runner.
 
 ## Repository map
 
@@ -469,10 +469,10 @@ memory_core/
   api/         REST routes, auth dependency, rate limit
   adapters/    postgres store, LLM, embedders, queues (the only place vendor code lives)
   memory.py    library facade          mcp_server.py   MCP server         sdk.py   Python client
-  integrations/  LangGraph hook and v3 shims
+  integrations/  LangGraph hook and agent-tool shims
 assets/        logo and diagrams, regenerated by make_assets.py
 .github/       CI: the suite against pgvector, plus a check that the frozen tests are untouched
-docs/          PRD.md, PLAN.md, V3_ALIGNMENT.md
+docs/          PRD.md, PLAN.md, DESIGN.md
 tests/         unit, integration, contract, acceptance (frozen), eval, bench
 ```
 

@@ -37,14 +37,14 @@ async def ingest(c, text, when, scope=S):
 
 async def test_tables_live_in_their_own_schema_and_coexist_with_a_v3_memories_table(admin):
     await admin.execute("DROP TABLE IF EXISTS public.memories CASCADE")
-    await admin.execute("CREATE TABLE public.memories (id int)")  # what v3 already has
+    await admin.execute("CREATE TABLE public.memories (id int)")  # what the host app already has
     try:
         await reset(ADMIN)  # must not collide with it
         assert await admin.fetchval("SELECT count(*) FROM information_schema.tables "
                                     "WHERE table_schema='memaso' AND table_name IN ('memories','chunks','documents')") == 3
         cols = await admin.fetchval("SELECT count(*) FROM information_schema.columns "
                                     "WHERE table_schema='public' AND table_name='memories'")
-        assert cols == 1  # v3's table is untouched
+        assert cols == 1  # the host's table is untouched
     finally:
         await admin.execute("DROP TABLE public.memories")
 

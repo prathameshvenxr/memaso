@@ -6,11 +6,11 @@
 
 **Tech Stack:** Python 3.12, FastAPI, SQLAlchemy 2 (async) + Alembic, Postgres 16 + pgvector, pytest + pytest-asyncio, `mcp` Python SDK, LangGraph (hook only).
 
-**Spec:** `memory-core-prd.md` (approved with all section-15 defaults). Requirement ids (FR-n, AC-n) below refer to it.
+**Spec:** `docs/PRD.md` (approved with all section-15 defaults). Requirement ids (FR-n, AC-n) below refer to it.
 
 ## Global Constraints
 
-- New standalone repo `memory-core/`, **outside** `/Users/shura/Venxr`. Nothing in Venxr is read-write touched.
+- New standalone repo `memory-core/`. Nothing outside it is touched.
 - Tests use a **local** Docker Postgres (`pgvector/pgvector:pg16`). Never create a database or role on any server.
 - No `git commit` or `git push` unless the user asks. Steps end at "tests pass".
 - Core never imports an adapter or a vendor SDK. Only `memory_core/adapters/*` and `memory_core/bootstrap.py` do.
@@ -190,7 +190,7 @@ memory-core/
 
 ## Out of scope for this plan (P1/P2 in the PRD)
 
-File and URL ingestion, decay, rerank, multi-hop, inspector UI, v3 migration, webhooks, TS SDK, connectors.
+File and URL ingestion, decay, rerank, multi-hop, inspector UI, flat-table migration, webhooks, TS SDK, connectors.
 
 ## Self-review
 

@@ -112,7 +112,7 @@ res = <span class="k">await</span> m.search(<span class="s">"what is the budget?
 <span class="k">from</span> memory_core.types <span class="k">import</span> Scope
 
 <span class="c"># llm: async (messages: list[dict], schema: dict) -> dict. Omit it for no model.</span>
-mem = <span class="k">await</span> Memory.create(<span class="s">"config.yaml"</span>, llm=call_llm)
+mem = <span class="k">await</span> Memory.create(<span class="s">"config.yaml"</span>, llm=my_llm)
 scope = Scope(tenant=team_id, subject=user_id, container=account_id)
 
 block = <span class="k">await</span> mem.context(scope, user_text, token_budget=1500)   <span class="c"># profile + recall, never over budget</span>

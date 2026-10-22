@@ -50,7 +50,7 @@
       <div class="diagram loading" id="d0" role="img" aria-label="diagram"><span>Loading diagram…</span></div><script type="text/plain" class="mmd" data-target="d0">flowchart LR
   subgraph clients[" Clients "]
     direction TB
-    LIB["Library<br/>Memory.create(cfg, llm=call_llm)"]
+    LIB["Library<br/>Memory.create(cfg, llm=my_llm)"]
     REST["REST + Python SDK"]
     MCP["MCP server<br/>4 tools"]
     LG["LangGraph hook<br/>remember / context"]
@@ -240,7 +240,7 @@
   PROXY --> API["api × N<br/>stateless<br/>local ONNX embedder"]
   API --> PG[("postgres 16 + pgvector<br/>schema memaso<br/>row-level security")]
   API --> REDIS[("redis<br/>job queue<br/>when replicas > 1")]
-  API -. "optional" .-> HOST["the app's own model<br/>call_llm"]
+  API -. "optional" .-> HOST["the app's own model<br/>my_llm"]
   classDef verb fill:#E3F5F2,stroke:#0F8F83,color:#1A1630
   classDef fact fill:#EFEBFF,stroke:#6A4CFF,color:#1A1630
   classDef port fill:#FFFFFF,stroke:#6B6785,stroke-dasharray:4 3,color:#1A1630

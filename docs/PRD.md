@@ -1,4 +1,4 @@
-# PRD: Memory Core, the memory layer for AdsGPT v3
+# PRD: Memory Core, a memory layer for AI agents
 
 Status: draft for approval · Owner: Prathamesh · Date: 2026-10-22
 Items marked **[assumed]** are my defaults, not decisions. Change any of them before build.
@@ -7,16 +7,16 @@ Items marked **[assumed]** are my defaults, not decisions. Change any of them be
 
 ## 1. Why
 
-AdsGPT v3 (white paper §12) has five stores, but its long-term memory is one flat `memories` table. A `remember` tool writes to it, and everything is injected into every chat.
+Agent backends commonly keep long-term memory as one flat table. A `remember` tool writes to it, and everything is injected into every chat.
 
 That breaks as usage grows:
 - **No retrieval.** Every memory is injected every time, so cost and noise grow with the number of memories.
 - **No extraction.** A memory exists only if the model chooses to call `remember`.
 - **No truth maintenance.** "Budget is 50k" and "budget is 80k" both stay.
 - **No scoping beyond global or per account.** There is no brand, team, campaign or session scope.
-- **Locked to v3.** The logic is tied to one backend and one model pair.
+- **Locked to one backend.** The logic is tied to one backend and one model pair.
 
-Memory Core is a standalone, model-agnostic, storage-agnostic memory engine. It is our own supermemory-style system. v3 is the first client. Any other product or agent can use it.
+Memory Core is a standalone, model-agnostic, storage-agnostic memory engine. It is a supermemory-style system. Any product or agent can use it.
 
 ## 2. Goals
 
@@ -47,10 +47,10 @@ Memory Core is a standalone, model-agnostic, storage-agnostic memory engine. It 
 
 | Who | Scenario |
 |---|---|
-| AdsGPT analyst agent | "Last month we agreed CPA target is ₹420 for the Diwali account." Next chat: recalled without the user repeating it. |
+| Ads analyst agent | "Last month we agreed CPA target is ₹420 for the Diwali account." Next chat: recalled without the user repeating it. |
 | Media buyer | Prefers weekly reports in INR, hates pie charts. The agent adapts without being told. |
 | Agency admin | Memory is isolated per client account. An export and a wipe are available. |
-| Another Venxr product or agent | Calls the same API with a different scope. No code changes. |
+| Another product or agent | Calls the same API with a different scope. No code changes. |
 | Engineer | Swaps the extractor from one model to another via config, then runs the eval suite to compare. |
 
 ## 6. Concepts
@@ -96,13 +96,13 @@ Priority: **P0** = must ship in the one-shot, **P1** = next, **P2** = later.
 - FR-21 (P0) Hard delete by memory id, document id, subject, or tenant. It cascades to embeddings, graph edges and caches, and returns a deletion receipt.
 - FR-22 (P0) Export of a scope as JSON.
 - FR-23 (P1) Memory inspector UI: browse, search, edit, delete, and see why a memory was recalled.
-- FR-24 (P1) Bulk import and migration from v3's existing `memories` table.
+- FR-24 (P1) Bulk import and migration from an existing flat `memories` table.
 
 ### 7.5 Interfaces
 - FR-25 (P0) REST API with OpenAPI spec.
 - FR-26 (P0) MCP server exposing `memory_add`, `memory_search`, `memory_profile` and `memory_forget`, so any MCP-capable agent can use it with no SDK.
 - FR-27 (P0) Python SDK (async). A TypeScript SDK is P1.
-- FR-28 (P0) A LangGraph integration. It provides a `remember` tool and a pre-model hook that injects `profile + search` into the prompt. It replaces v3's flat injection.
+- FR-28 (P0) A LangGraph integration. It provides a `remember` tool and a pre-model hook that injects `profile + search` into the prompt. It replaces flat injection of every memory.
 - FR-29 (P1) Webhooks for `memory.created / superseded / deleted`.
 
 ### 7.6 Modularity (core requirement)
@@ -137,7 +137,7 @@ Priority: **P0** = must ship in the one-shot, **P1** = next, **P2** = later.
 | Observability | Structured logs, metrics (add/search latency, queue depth, extraction failures, recall hit-rate), trace ids across ingest to index. |
 | Cost | Track tokens and spend per tenant. Per-tenant rate limits and monthly budget cap. |
 | Portability | Runs via Docker Compose. Postgres is the only required service in v1. |
-| Deploy safety | Separate service, separate schema. It never touches v3's existing tables except through the one-time migration (FR-24). |
+| Deploy safety | Separate service, separate schema. It never touches the host application's tables except through the one-time migration (FR-24). |
 
 ## 9. Architecture (summary)
 
@@ -159,7 +159,7 @@ Priority: **P0** = must ship in the one-shot, **P1** = next, **P2** = later.
         default adapters: Postgres + pgvector + FTS
 ```
 
-Tech defaults **[assumed]**: Python 3.12, FastAPI, SQLAlchemy and Alembic, pgvector, an in-process queue (Redis adapter as P1), pytest. Chosen to match v3's stack.
+Tech defaults **[assumed]**: Python 3.12, FastAPI, SQLAlchemy and Alembic, pgvector, an in-process queue (Redis adapter as P1), pytest. Chosen to match a typical Python agent backend.
 
 ## 10. Data model (core tables)
 
@@ -175,9 +175,9 @@ Quality must be measured, not assumed.
 - AC-4 Deletion test: after hard delete, the memory is absent from search, export, embeddings and graph edges.
 - AC-5 Swap test: switch the LLM, then the embedder, then the store adapter, by config only. The contract suite passes and the eval result is reported for each.
 - AC-6 Token budget is never exceeded across 1,000 randomized queries.
-- AC-7 The LangGraph hook runs end to end in a local v3-shaped agent with the flat `memories` injection replaced.
+- AC-7 The LangGraph hook runs end to end in a local LangGraph agent with flat memory injection replaced.
 
-## 12. Success metrics (after v3 adopts it)
+## 12. Success metrics (after a backend adopts it)
 
 - Prompt tokens spent on memory per chat is lower than flat injection at 50+ memories.
 - Users repeat a preference or fact less often (tracked by dedup-hit rate on `add`).
@@ -207,7 +207,7 @@ Quality must be measured, not assumed.
 ## 15. Decisions needed before build
 
 1. Name. **[assumed]** "Memory Core" as a working title.
-2. Where the code lives. v3 isn't set up yet, and I won't touch the Venxr folder. **[assumed]** a new standalone repo outside Venxr.
-3. Is multi-tenant needed on day one, or is v3's user and account model enough? **[assumed]** Multi-tenant from day one, since retrofitting is expensive.
+2. Where the code lives. **[assumed]** a new standalone repo.
+3. Is multi-tenant needed on day one, or is the host application's user and account model enough? **[assumed]** Multi-tenant from day one, since retrofitting is expensive.
 4. Default LLM and embedder for the first eval run. **[assumed]** Anthropic for extraction and an OpenAI-style embedder.
-5. Do we migrate v3's existing memories in the first release (FR-24)? **[assumed]** P1.
+5. Do we migrate an existing flat memories table in the first release (FR-24)? **[assumed]** P1.

@@ -13,7 +13,7 @@ SERVER_SETTINGS = {"search_path": "memaso,public"}  # our tables live in schema 
 
 async def migrate(admin_dsn: str, app_role: str = "memaso_app") -> None:
     """Creates schema `memaso` and everything in it. Never touches other schemas, so it can share a database
-    with an application (v3) that has its own `memories`, `documents` and `usage` tables."""
+    with an application that has its own `memories`, `documents` and `usage` tables."""
     conn = await asyncpg.connect(admin_dsn)  # plain connection: the extension and schema are created first
     try:
         await conn.execute("SELECT pg_advisory_lock(727274)")  # replicas starting together migrate one at a time

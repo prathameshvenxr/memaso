@@ -1,6 +1,6 @@
 """Library mode: the whole engine behind one object, for embedding in an application's backend.
 
-    mem = await Memory.create(cfg, llm=call_llm)   # llm: the app's own model call, or None for no model at all
+    mem = await Memory.create(cfg, llm=my_llm)   # llm: the app's own model call, or None for no model at all
     ctx = await mem.context(scope, user_text, 1500)   # small ranked block to put in the prompt
     await mem.ingest_turn(scope, messages)            # verbatim, no model call
     await mem.remember(scope, "CPA target is 420")    # a fact the agent already extracted

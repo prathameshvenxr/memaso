@@ -14,7 +14,7 @@ truth:    {judge: auto, neighbour_threshold: 0.40, neighbours: 5}   # auto: rule
 retrieval: {min_similarity: 0.30}               # vector matches below this cosine are dropped (abstain, don't guess)
 limits:   {requests_per_minute: 600}
 
-# Use the application's own model instead (library mode): Memory.create(cfg, llm=call_llm), llm adapter "host".
+# Use the application's own model instead (library mode): Memory.create(cfg, llm=my_llm), llm adapter "host".
 # Example of a paid/remote model for model-based extraction:
 #   llm:   {adapter: anthropic, model: <fast-tier-model>}
 #   facts: {extract: llm}

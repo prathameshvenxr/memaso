@@ -23,7 +23,7 @@ def _llm(cfg: dict, host_call):
     name = cfg["adapter"]
     if host_call is not None or name == "host":
         if host_call is None:
-            raise ValueError("llm.adapter 'host' needs the application's model call: build(cfg, llm=call_llm)")
+            raise ValueError("llm.adapter 'host' needs the application's model call: build(cfg, llm=my_llm)")
         return import_module("memory_core.adapters.llm_host").HostLLM(host_call)
     if name == "none":
         return None
