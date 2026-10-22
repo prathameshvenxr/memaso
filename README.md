@@ -24,7 +24,7 @@
 <p align="center">
   <img alt="python 3.12" src="https://img.shields.io/badge/python-3.12-1A1630?style=flat-square">
   <img alt="postgres + pgvector" src="https://img.shields.io/badge/postgres-pgvector-6A4CFF?style=flat-square">
-  <img alt="201 tests" src="https://img.shields.io/badge/tests-201_passing-0F8F83?style=flat-square">
+  <img alt="265 tests" src="https://img.shields.io/badge/tests-265_passing-0F8F83?style=flat-square">
   <img alt="no model required" src="https://img.shields.io/badge/LLM-optional-F0397A?style=flat-square">
 </p>
 
@@ -41,6 +41,7 @@
 - **Recalls cheaply.** Search is embeddings plus full-text, fused, then packed to the token budget you give it. It makes no model call.
 - **Uses a model only where one helps.** Plain statements are read by rules. A model (your app's own, or one you configure) is asked only when a case is genuinely ambiguous.
 - **Stays inside the lines.** Row-level tenant isolation, account scoping, real deletion, and recalled text that is escaped and labelled as untrusted data.
+- **Looks after itself.** Facts carry an importance score and fade with disuse. `consolidate` merges duplicate facts and archives cold, low-value ones (kept, not deleted). An entity graph links facts through the names in them, so a question about a person reaches the account facts behind them. No model is involved in any of it.
 - **Fits an existing backend.** Library mode runs in-process on your Postgres, in its own schema, with hooks for the run loop, context compaction and the tool registry.
 
 ## How it works
@@ -340,6 +341,10 @@ erDiagram
     real confidence
     timestamptz valid_from
     timestamptz valid_to "null while current"
+    real importance "grows when restated"
+    int access_count "times it was recalled"
+    timestamptz archived_at "set when cold; the row and its text stay"
+    text entity_keys "lower-cased names, GIN-indexed"
   }
   MEMORY_CHUNKS {
     text memory_id FK
@@ -349,6 +354,31 @@ erDiagram
 ```
 
 Everything lives in the `memaso` schema (the `vector` extension in `public`), so it can share a database with your application's own tables. Each memory also has `memory_links` (supersession history with the judge's reason) and `embeddings` (one vector per `model_id`). Operational tables, `audit_log`, `deletion_receipts`, `jobs_dead_letter` and `usage`, hold ids and counts, never memory text.
+
+## Memory management
+
+None of this calls a model.
+
+**Updates in any phrasing.** "We raised our monthly budget to 80k", "the budget has been updated to 90k", "we changed the CPA target from 420 to 380", "the budget went up to 90k" and "the budget is now 80k" are all read as the statement "X is V". Instructions ("raise the budget to 80k"), intentions, the future and questions never are. "Monthly budget" updates "budget" only when the numbers are within `truth.related_ratio` of each other (4x by default): a daily figure beside a monthly one stays a separate fact. `truth.aliases` names attributes that mean the same thing (`cpa` and `cost per acquisition`). The same statement in other words is a duplicate, so confidence rises and no new version is made.
+
+**Importance and forgetting.** Each fact is scored when it is stored (its kind, emphasis words such as "never" and "must", a concrete number, an explicit `remember`) and gains importance each time it is restated. *Salience* blends importance with a forgetting curve, where important facts fade slower (`consolidation.half_life_days`, 90 by default), and with how often the fact has been used. It nudges the ranking of search results and decides what a small profile keeps. It never decides what is true; supersession does that.
+
+**Consolidation.** `await mem.consolidate(scope)`, `POST /v1/consolidate` or `client.consolidate()` does two things for one subject. It merges current facts that state the same attribute and value, closing the later one and moving its provenance and verbatim links to the kept one. It archives facts that are old, unused and unimportant (age at least `archive_after_days`, salience under `archive_below`, importance under 0.8; the defaults mean a fact that is old, never used and below a decision's importance), and trims a subject that holds more than `max_current` facts, least salient first. Archiving closes the fact's validity at that moment, so it is history: it leaves current search, the verbatim words it came from stop reading as current, and its vector is freed. The row, its source text and its history stay, readable with `include_history`, or with `as_of` for a date before it was archived. `restore` brings a fact back, unless a current fact already states the same attribute (a newer value, or the same one), because that would put a stale value beside the current one. Forgetting a memory also forgets the duplicates merged into it. Consolidating one container never archives the facts shared with the others, and runs under the same per-subject lock as ingest. It is an explicit, bounded call (the newest and the coldest `batch` facts, never the whole table), meant for a scheduler, and it writes an audit row with counts only.
+
+**Entity graph.** The names in a fact (people, accounts, campaigns) are stored lower-cased in an indexed column. A question that names an entity pulls the facts that name it, then the facts that share an entity with those (`retrieval.graph_hops`: 0 off, 1, or 2). "What number should Priya hit?" finds "The account lead for Acme is Priya", and through Acme, "The Acme CPA target is 420". The graph is name co-occurrence, not typed relations. It adds one indexed lookup per question, a second only when the first found something, and nothing when the question names no known entity.
+
+```yaml
+truth:
+  related_ratio: 4.0
+  aliases: [[cpa, cost per acquisition]]
+retrieval:
+  graph_hops: 2
+consolidation:
+  archive_after_days: 180
+  archive_below: 0.35
+  max_current: 5000
+  half_life_days: 90
+```
 
 ## Where a model is used
 
@@ -385,21 +415,25 @@ metrics scores about 0.5, the same as a vague real question, so no similarity cu
 (`retrieval.min_similarity: 0.30`) does abstain on off-domain questions (cricket, weather: 0.05 to 0.22). For "close but
 not stored" the agent decides from the returned text, as with any retrieval system.
 
-**Messier chat, 60 items, no LLM** (`tests/eval/dataset_messy.jsonl`: first-person phrasing, "actually..." corrections,
-compound sentences, buried facts, opposite preferences, paraphrased updates). Identical on the hash embedder and on MiniLM:
+**Messier chat, 110 items, no LLM** (`tests/eval/dataset_messy.jsonl`: first-person phrasing, corrections, compound sentences, buried facts, opposite preferences, updates phrased as events, a daily-versus-monthly control, and a question that needs one hop through an entity). Identical on the hash embedder and on MiniLM. The flat-notes column is a stand-in for a plain note-file memory (`tests/eval/flat_baseline.py`): every statement is kept, the file is loaded whole, newest first, up to the same 1,000-token budget. It is not any vendor's actual implementation.
 
-| category | pass rate |
-|---|---|
-| first-person preference ("I prefer weekly reports") | 1.00 |
-| correction with a marker ("Actually the budget is 80k") | 1.00 |
-| compound sentence ("budget is 80k and the CPA is 420") | 1.00 |
-| fact buried in chatter | 1.00 |
-| opposite preferences ("I hate X" then "I like X") | 1.00 |
-| **paraphrased update** ("We've raised our monthly budget to 80k") | **0.00** |
+| category | Memaso | flat notes |
+|---|---|---|
+| first-person preference ("I prefer weekly reports") | 1.00 | 1.00 |
+| compound sentence ("budget is 80k and the CPA is 420") | 1.00 | 1.00 |
+| fact buried in chatter | 1.00 | 1.00 |
+| daily figure beside a monthly one (must stay separate) | 1.00 | 1.00 |
+| one hop through an entity ("what number should Priya hit?") | 1.00 | 1.00 |
+| correction with a marker ("Actually the budget is 80k") | 1.00 | 0.00 |
+| paraphrased update ("We've raised our monthly budget to 80k") | 1.00 | 0.00 |
+| passive update ("The budget has been updated to 90k") | 1.00 | 0.00 |
+| from-to update ("We changed the CPA target from 420 to 380") | 1.00 | 0.00 |
+| "went up to" update ("The budget went up to 90k") | 1.00 | 0.00 |
+| opposite preferences ("I hate X" then "I like X") | 1.00 | 0.00 |
 
-The last row is a real limit: rules cannot tell that "monthly budget" is the same attribute as "budget", so the old
-value stays visible. A model resolves it (the judge is asked when subjects overlap): pass `llm=` or set `llm.adapter`.
-That model path is covered by tests with scripted answers, and has not been run against a live LLM.
+Flat notes cannot retire a value, so every row where a value changes leaves the old one beside the new one. Where nothing changes they match Memaso. Cost differs too: one question over 301 notes costs 182 prompt tokens in Memaso and 3,133 for the whole flat file, and a flat file cut at the 1,000-token budget drops the oldest fact altogether (both are tested in `tests/integration/test_vs_flat_memory.py`). The "from-to" row checks that the stale *claim* is gone ("target is 4123"), because the update sentence rightly still mentions the old number.
+
+What the rules still do not read: a refinement whose extra word is not a period ("ads budget" against "budget") stays ambiguous, so both facts are kept unless a model is configured. That path is covered by tests with scripted answers and a live-embedder test, and has not been run against a live LLM.
 
 **Scale.** One subject with facts plus chunks, 384-dimension vectors, exact scan, Postgres 16 in Docker on a laptop:
 
@@ -408,7 +442,7 @@ That model path is covered by tests with scripted answers, and has not been run 
 | 50k facts + 50k chunks | 100k | 167 / 233 ms | 202 ms |
 | 100k facts + 100k chunks | 200k | 213 / 333 ms | 275 ms |
 
-Latency grows about linearly. The PRD target (p95 under 300 ms) holds to roughly 150k vectors for one subject. Typical
+These figures were measured on a quieter machine than the one used later; on a busy laptop the same code measured about twice as slow (the previous commit and this one differ only by noise on the same machine), so run `python -m tests.bench.bench_scale` for yours. Latency grows about linearly. The PRD target (p95 under 300 ms) holds to roughly 150k vectors for one subject. Typical
 subjects hold far fewer; a tenant with many subjects is filtered down to one subject per query. No ANN index is used on
 purpose: with tenant, subject and validity filters an approximate index can silently drop matches, so recall stays exact.
 
@@ -441,8 +475,9 @@ purpose: with tenant, subject and validity filters an approximate index can sile
   questions, hedges, past-tense remarks ("CPA was 420 last month"), and compound or comma-joined sentences
   ("X is 1 and Y is 2", "X is 1, Y is 2"), which stay verbatim-only. Vague subjects ("we are", "it is") never supersede one another. For richer facts use
   `remember` or `facts.extract: llm`. Two preferences about different things are never merged by rules; only an exact
-  opposite (hates vs likes the same thing) is. Paraphrased subjects ("budget" vs "monthly budget") are ambiguous: with
-  a model it decides, without one both facts stay.
+  opposite (hates vs likes the same thing) is. A refined name ("monthly budget" for "budget") is the same attribute only when the extra word
+  is a period and the numbers are within `truth.related_ratio`; other extra words stay ambiguous: with a model it
+  decides, without one both facts stay.
 - Order: one subject's documents are applied oldest-first under a per-subject lock, whichever worker runs first.
 - The in-process queue and rate limiter are per process; use the Redis queue (and a shared limiter) for replicas.
 
@@ -452,20 +487,24 @@ purpose: with tenant, subject and validity filters an approximate index can sile
 - **No live-LLM run.** The model paths (host `llm=`, `facts.extract: llm`, the judge for ambiguous cases) are covered by
   tests with scripted answers and a rule-based fake; none has been exercised against a real provider.
 - **Evals are synthetic.** The datasets are template-based. They guard against regressions; they say little about real
-  chat text. Paraphrased updates need a model (0.00 without one, see above).
+  chat text. The comparison with flat notes is against my own stand-in, not a vendor's memory.
 - **Latency beyond ~150k vectors per subject** exceeds the 300 ms target, because search is an exact scan on purpose.
 - **English only** for the rules extractor and the full-text leg.
 - **No license file yet.** Choosing one is the owner's call.
-- Not built: entity/triple graph, entity-aware ranking boosts, file/URL ingestion, decay, rerank, inspector UI,
-  flat-table data migration, webhooks, TS SDK, LongMemEval-style runner.
+- **Salience weights and consolidation thresholds are untuned.** They are sensible defaults checked by tests on synthetic
+  data; real traffic will say whether the half-life and archive threshold fit.
+- **The entity graph is name co-occurrence.** Only capitalised names (and names passed to `remember`) become entities; there
+  are no typed relations and no coreference.
+- Not built: typed entity relations, file/URL ingestion, rerank, inspector UI, flat-table data migration, webhooks, TS SDK,
+  LongMemEval-style runner.
 
 ## Repository map
 
 ```
 memory_core/
   ingest/      chunking, rules, truth maintenance, the pipeline
-  retrieval/   fusion, packing, search, profile
-  manage/      edit, forget, export, audit
+  retrieval/   fusion, packing, search, profile, salience, entity graph
+  manage/      edit, forget, export, audit, consolidate
   api/         REST routes, auth dependency, rate limit
   adapters/    postgres store, LLM, embedders, queues (the only place vendor code lives)
   memory.py    library facade          mcp_server.py   MCP server         sdk.py   Python client

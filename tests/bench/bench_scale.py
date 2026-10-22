@@ -21,7 +21,8 @@ from tests.conftest import ADMIN, APP
 
 TENANT, SUBJECT, DIM = "bench", "u", 384
 QUERIES = ["what is the budget", "which reports do I prefer", "cpa target for the account", "creative fatigue",
-           "weekly report in INR", "who joined the call", "campaign pacing", "audience size", "word42 bench", "roas"]
+           "weekly report in INR", "who joined the call", "campaign pacing", "audience size", "word42 bench", "roas",
+           "what is ent42 doing", "numbers for ent1999 and ent7"]  # the last two reach the entity graph
 
 
 async def load(rows: int) -> str:
@@ -32,8 +33,9 @@ async def load(rows: int) -> str:
                        "VALUES('bench-doc',$1,$2,'bench','bench-hash','indexed',now())", TENANT, SUBJECT)
     t = time.time()
     await conn.execute(f"""
-        INSERT INTO memories(id,tenant,subject,text,kind,confidence,valid_from,extractor_version)
-        SELECT 'bm'||g, $1, $2, 'word'||(g % 5000)||' bench fact '||g, 'fact', 0.9, now() - interval '1 day', 'bench'
+        INSERT INTO memories(id,tenant,subject,text,kind,confidence,valid_from,extractor_version,entities,entity_keys)
+        SELECT 'bm'||g, $1, $2, 'word'||(g % 5000)||' bench fact '||g, 'fact', 0.9, now() - interval '1 day', 'bench',
+               ARRAY['Ent'||(g % 2000)], ARRAY['ent'||(g % 2000)]
         FROM generate_series(1,$3::int) g""", TENANT, SUBJECT, rows)
     await conn.execute(f"""
         INSERT INTO embeddings(memory_id,model_id,tenant,vector)

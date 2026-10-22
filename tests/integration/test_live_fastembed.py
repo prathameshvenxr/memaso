@@ -39,7 +39,7 @@ async def test_update_is_found_and_superseded_with_real_embeddings_and_default_t
                                                                    "The ROAS target is 4"}
 
 
-async def test_a_paraphrased_update_needs_the_model_and_gets_it_when_there_is_one(admin):
+async def test_an_ambiguous_refinement_needs_the_model_and_gets_it_when_there_is_one(admin):
     calls = []
 
     async def host(messages, schema):
@@ -51,20 +51,28 @@ async def test_a_paraphrased_update_needs_the_model_and_gets_it_when_there_is_on
     with_model = build(load_config(None, ENV), llm=host)
     await with_model.start()
     try:
-        for text, when in (("The budget is 50k", at(2026, 1, 1)), ("Our monthly budget is now set to 80k", at(2026, 2, 1))):
+        for text, when in (("The budget is 50k", at(2026, 1, 1)), ("Our ads budget is now set to 80k", at(2026, 2, 1))):
             await pipeline.add(with_model, S, text, observed_at=when)
             await with_model.queue.join()
         assert len(calls) == 1  # asked once, only for the paraphrase
-        assert [m.text for m in await with_model.mems.list(S, 10, 0)] == ["Our monthly budget is now set to 80k"]
+        assert [m.text for m in await with_model.mems.list(S, 10, 0)] == ["Our ads budget is now set to 80k"]
     finally:
         await with_model.close()
 
 
-async def test_without_a_model_a_paraphrase_is_kept_as_a_separate_fact_never_guessed(real):
-    for text, when in (("The budget is 50k", at(2026, 1, 1)), ("Our monthly budget is now set to 80k", at(2026, 2, 1))):
+async def test_without_a_model_an_ambiguous_refinement_is_kept_as_a_separate_fact_never_guessed(real):
+    for text, when in (("The budget is 50k", at(2026, 1, 1)), ("Our ads budget is now set to 80k", at(2026, 2, 1))):
         await pipeline.add(real, S, text, observed_at=when)
         await real.queue.join()
     assert len(await real.mems.list(S, 10, 0)) == 2
+
+
+async def test_a_paraphrased_update_with_a_comparable_number_needs_no_model(real):
+    for text, when in (("The budget is 50k", at(2026, 1, 1)), ("Our monthly budget is now set to 80k", at(2026, 2, 1))):
+        await pipeline.add(real, S, text, observed_at=when)
+        await real.queue.join()
+    assert [m.text for m in await real.mems.list(S, 10, 0)] == ["Our monthly budget is now set to 80k"]
+    assert "50k" not in (await search(real, S, "what is the budget")).context
 
 
 async def test_real_embeddings_answer_natural_questions_and_abstain_off_domain(real):

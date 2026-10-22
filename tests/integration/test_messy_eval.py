@@ -8,7 +8,8 @@ from tests.eval.run_eval import run_by_type
 
 FREE = dict(FAKE_ENV, MEMASO__LLM__ADAPTER="none", MEMASO__FACTS__EXTRACT="rules", MEMASO__TRUTH__JUDGE="auto",
             MEMASO__EMBEDDER__DIM="256", MEMASO__QUEUE__WORKERS="4")
-SUPPORTED = ("first_person_preference", "marker_update", "compound_sentence", "buried_fact", "opposite_preference")
+SUPPORTED = ("first_person_preference", "marker_update", "compound_sentence", "buried_fact", "opposite_preference",
+             "paraphrased_update", "passive_update", "from_to_update", "went_to_update", "daily_is_not_monthly", "multi_hop")
 
 
 async def test_messy_chat_categories_the_rules_are_meant_to_handle(admin):

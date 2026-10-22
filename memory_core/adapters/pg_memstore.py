@@ -21,7 +21,8 @@ def _mem(r) -> Memory:
                   importance=r["importance"], valid_from=r["valid_from"], valid_to=r["valid_to"],
                   supersedes=list(r["supersedes"]), source_doc_ids=list(r["source_doc_ids"]),
                   extractor_version=r["extractor_version"], created_at=r["created_at"],
-                  last_accessed=r["last_accessed"], meta=json.loads(r["meta"]))
+                  last_accessed=r["last_accessed"], meta=json.loads(r["meta"]),
+                  access_count=r["access_count"], archived_at=r["archived_at"])
 
 
 def _dt(v, name: str) -> datetime:
@@ -60,6 +61,7 @@ def _where(scope: Scope, filters: dict | None, as_of: datetime | None, params: l
     elif not f.get("include_history"):
         now = datetime.now(UTC)
         conds.append(f"({a}.valid_to IS NULL OR {a}.valid_to > {p(now)})")
+        conds.append(f"{a}.archived_at IS NULL")  # cold, low-value memories stay readable via include_history / as_of
         if not f.get("include_future"):  # a fact scheduled for later is not current yet
             conds.append(f"{a}.valid_from <= {p(now)}")
     if f.get("kind"):
@@ -107,11 +109,11 @@ class PgMemStore:
         async with self.pg.tx(s.tenant) as c:
             await c.execute(
                 "INSERT INTO memories(id,tenant,subject,container,text,kind,entities,confidence,importance,"
-                "valid_from,valid_to,extractor_version,meta,created_at) "
-                "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)",
+                "valid_from,valid_to,extractor_version,meta,created_at,entity_keys,last_accessed,access_count) "
+                "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17)",
                 mem.id, s.tenant, s.subject, s.container, mem.text, mem.kind.value, mem.entities, mem.confidence,
                 mem.importance, mem.valid_from, mem.valid_to, mem.extractor_version, json.dumps(mem.meta),
-                mem.created_at)
+                mem.created_at, [e.lower() for e in mem.entities], mem.last_accessed, mem.access_count)
             for d in mem.source_doc_ids:
                 await c.execute("INSERT INTO memory_sources VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
                                 mem.id, d, s.tenant)
@@ -148,8 +150,8 @@ class PgMemStore:
 
     async def bump_confidence(self, tenant: str, id: str, source_doc_id: str) -> None:
         async with self.pg.tx(tenant) as c:
-            await c.execute("UPDATE memories SET confidence = LEAST(1.0, confidence + 0.1) "
-                            "WHERE tenant=$1 AND id=$2", tenant, id)
+            await c.execute("UPDATE memories SET confidence = LEAST(1.0, confidence + 0.1), "
+                            "importance = LEAST(1.0, importance + 0.05) WHERE tenant=$1 AND id=$2", tenant, id)
             await c.execute("INSERT INTO memory_sources VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
                             id, source_doc_id, tenant)
 
@@ -163,7 +165,7 @@ class PgMemStore:
     async def missing_vectors(self, tenant: str, model_id: str, limit: int) -> list[Memory]:
         async with self.pg.tx(tenant) as c:
             rows = await c.fetch(
-                _SELECT + " WHERE m.tenant=$1 AND NOT EXISTS (SELECT 1 FROM embeddings e "
+                _SELECT + " WHERE m.tenant=$1 AND m.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM embeddings e "
                 "WHERE e.memory_id=m.id AND e.model_id=$2) LIMIT $3", tenant, model_id, limit)
         return [_mem(r) for r in rows]
 
@@ -187,10 +189,11 @@ class PgMemStore:
                 if reopen:
                     await self._reopen(c, tenant, [memory_id])
                 # the verbatim text the fact came from goes with it, even when the document has other facts
+                ids, _ = await self._with_duplicates(c, tenant, memory_id)
                 await c.execute("DELETE FROM chunks WHERE tenant=$1 AND id IN "
-                                "(SELECT chunk_id FROM memory_chunks WHERE tenant=$1 AND memory_id=$2)",
-                                tenant, memory_id)
-                r = await c.execute("DELETE FROM memories WHERE tenant=$1 AND id=$2", tenant, memory_id)
+                                "(SELECT chunk_id FROM memory_chunks WHERE tenant=$1 AND memory_id = ANY($2))",
+                                tenant, ids or [memory_id])
+                r = await c.execute("DELETE FROM memories WHERE tenant=$1 AND id = ANY($2)", tenant, ids or [memory_id])
                 return int(r.split()[-1])
             if doc_id:
                 ids = [x["memory_id"] for x in await c.fetch(
@@ -209,34 +212,117 @@ class PgMemStore:
                 r = await c.execute("DELETE FROM memories WHERE tenant=$1", tenant)
             return int(r.split()[-1])
 
+    @staticmethod
+    async def _with_duplicates(c, tenant: str, memory_id: str):
+        """The memory plus the duplicates consolidation merged into it: forgetting one must forget the others, or
+        the same words survive a hard delete. Returns (ids, texts)."""
+        row = await c.fetchrow("SELECT text FROM memories WHERE tenant=$1 AND id=$2", tenant, memory_id)
+        if row is None:
+            return [], []
+        dups = await c.fetch("SELECT m.id, m.text FROM memory_links l JOIN memories m ON m.id = l.supersedes_id "
+                             "WHERE l.tenant=$1 AND l.memory_id=$2 AND l.verdict='duplicate'", tenant, memory_id)
+        return [memory_id] + [d["id"] for d in dups], [row["text"]] + [d["text"] for d in dups]
+
     async def forget(self, tenant: str, memory_id: str, reopen: bool = False) -> dict:
         async with self.pg.tx(tenant) as c:
-            row = await c.fetchrow("SELECT text FROM memories WHERE tenant=$1 AND id=$2", tenant, memory_id)
-            if row is None:
+            ids, texts = await self._with_duplicates(c, tenant, memory_id)
+            if not ids:
                 return {"memories": 0, "documents": 0}
             docs = [r["document_id"] for r in await c.fetch(
-                "SELECT document_id FROM memory_sources WHERE tenant=$1 AND memory_id=$2", tenant, memory_id)]
+                "SELECT DISTINCT document_id FROM memory_sources WHERE tenant=$1 AND memory_id = ANY($2)", tenant, ids)]
             if reopen:
                 await self._reopen(c, tenant, [memory_id])
             await c.execute("DELETE FROM chunks WHERE tenant=$1 AND id IN "
-                            "(SELECT chunk_id FROM memory_chunks WHERE tenant=$1 AND memory_id=$2)", tenant, memory_id)
-            await c.execute("DELETE FROM memories WHERE tenant=$1 AND id=$2", tenant, memory_id)
+                            "(SELECT chunk_id FROM memory_chunks WHERE tenant=$1 AND memory_id = ANY($2))", tenant, ids)
+            await c.execute("DELETE FROM memories WHERE tenant=$1 AND id = ANY($2)", tenant, ids)
             gone = await c.execute(
                 "DELETE FROM documents d WHERE d.tenant=$1 AND d.id = ANY($2) AND NOT EXISTS "
                 "(SELECT 1 FROM memory_sources s WHERE s.document_id = d.id)", tenant, docs)
-            if docs and row["text"].strip():  # surviving documents (they back other facts) lose this fact's words
-                pattern = redaction_pattern(row["text"])
-                await c.execute("UPDATE documents SET content = regexp_replace(content, $3, '[removed]', 'gi') "
-                                "WHERE tenant=$1 AND id = ANY($2)", tenant, docs, pattern)
-                await c.execute("UPDATE chunks SET text = regexp_replace(text, $3, '[removed]', 'gi') "
-                                "WHERE tenant=$1 AND document_id = ANY($2)", tenant, docs, pattern)
+            for text in dict.fromkeys(t for t in texts if t.strip()):  # surviving documents lose these words
+                pattern = redaction_pattern(text)
+                if docs:
+                    await c.execute("UPDATE documents SET content = regexp_replace(content, $3, '[removed]', 'gi') "
+                                    "WHERE tenant=$1 AND id = ANY($2)", tenant, docs, pattern)
+                    await c.execute("UPDATE chunks SET text = regexp_replace(text, $3, '[removed]', 'gi') "
+                                    "WHERE tenant=$1 AND document_id = ANY($2)", tenant, docs, pattern)
             return {"memories": 1, "documents": int(gone.split()[-1])}
 
     async def touch(self, tenant: str, ids: list[str]) -> None:
         if ids:
             async with self.pg.tx(tenant) as c:
-                await c.execute("UPDATE memories SET last_accessed=now() WHERE tenant=$1 AND id = ANY($2)",
-                                tenant, ids)
+                await c.execute("UPDATE memories SET last_accessed=now(), access_count = access_count + 1 "
+                                "WHERE tenant=$1 AND id = ANY($2)", tenant, ids)
+
+    # ------------------------------------------------------------------ lifecycle: archive, merge, entity lookup
+    async def archive(self, tenant: str, ids: list[str], at: datetime) -> int:
+        """Retire cold memories from current search and free their vectors. The row and its source text stay."""
+        if not ids:
+            return 0
+        async with self.pg.tx(tenant) as c:
+            # validity is closed at the same moment: an archived fact is history, so it can neither read as current
+            # nor come back beside a newer value, and the chunk it came from treats it as retired
+            r = await c.execute("UPDATE memories SET archived_at=$3, valid_to=COALESCE(valid_to, $3) "
+                                "WHERE tenant=$1 AND id = ANY($2) AND archived_at IS NULL", tenant, ids, at)
+            await c.execute("DELETE FROM embeddings WHERE tenant=$1 AND memory_id = ANY($2)", tenant, ids)
+            return int(r.split()[-1])
+
+    async def unarchive(self, tenant: str, ids: list[str]) -> int:
+        if not ids:
+            return 0
+        async with self.pg.tx(tenant) as c:
+            r = await c.execute("UPDATE memories SET valid_to = CASE WHEN valid_to = archived_at THEN NULL ELSE valid_to END, "
+                                "archived_at = NULL WHERE tenant=$1 AND id = ANY($2) AND archived_at IS NOT NULL", tenant, ids)
+            return int(r.split()[-1])
+
+    async def merge_duplicate(self, tenant: str, keep_id: str, dup_id: str, at: datetime) -> None:
+        """One transaction: `dup_id` (same attribute and value as `keep_id`) is closed, its provenance and verbatim
+        links move to the kept memory, and the kept one gains confidence and importance."""
+        async with self.pg.tx(tenant) as c:
+            closed = await c.execute("UPDATE memories SET valid_to=$3 WHERE tenant=$1 AND id=$2 "
+                                     "AND (valid_to IS NULL OR valid_to > $3)", tenant, dup_id, at)
+            if closed.endswith(" 0"):  # already closed by someone else: nothing to merge, and no second bump
+                return
+            await c.execute("INSERT INTO memory_links VALUES($1,$2,$3,'duplicate','consolidated: same attribute and value') "
+                            "ON CONFLICT DO NOTHING", keep_id, dup_id, tenant)
+            await c.execute("INSERT INTO memory_sources SELECT $2, document_id, tenant FROM memory_sources "
+                            "WHERE tenant=$1 AND memory_id=$3 ON CONFLICT DO NOTHING", tenant, keep_id, dup_id)
+            await c.execute("INSERT INTO memory_chunks(memory_id, chunk_id, tenant, exact) SELECT $2, chunk_id, tenant, exact "
+                            "FROM memory_chunks WHERE tenant=$1 AND memory_id=$3 ON CONFLICT DO NOTHING", tenant, keep_id, dup_id)
+            await c.execute("DELETE FROM memory_chunks WHERE tenant=$1 AND memory_id=$2", tenant, dup_id)
+            await c.execute("UPDATE memories SET confidence = LEAST(1.0, confidence + 0.1), "
+                            "importance = LEAST(1.0, importance + 0.05) WHERE tenant=$1 AND id=$2", tenant, keep_id)
+
+    async def window(self, scope: Scope, limit: int, own_container_only: bool = False) -> list[Memory]:
+        """Current, un-archived memories, coldest first: the ones consolidation may archive. With a container scope,
+        `own_container_only` leaves out the shared (no-container) facts other containers rely on."""
+        params: list = []
+        where = _where(scope, {"container_is": scope.container} if own_container_only and scope.container else {}, None, params)
+        params.append(limit)
+        async with self.pg.tx(scope.tenant) as c:
+            rows = await c.fetch(f"{_SELECT} WHERE {where} ORDER BY COALESCE(m.last_accessed, m.created_at), m.id "
+                                 f"LIMIT ${len(params)}", *params)
+        return [_mem(r) for r in rows]
+
+    async def count_current(self, scope: Scope, own_container_only: bool = False) -> int:
+        params: list = []
+        where = _where(scope, {"container_is": scope.container} if own_container_only and scope.container else {}, None, params)
+        async with self.pg.tx(scope.tenant) as c:
+            return int(await c.fetchval(f"SELECT count(*) FROM memories m WHERE {where}", *params))
+
+    async def by_entities(self, scope: Scope, keys: list[str], k: int, filters: dict | None = None,
+                          as_of: datetime | None = None) -> list[tuple[str, float]]:
+        """Current memories that name any of these (lower-cased) entities, most important first. GIN-indexed."""
+        keys = [x for x in dict.fromkeys(keys) if x]
+        if not keys:
+            return []
+        params: list = []
+        where = _where(scope, filters, as_of, params)
+        params += [keys, k]
+        async with self.pg.tx(scope.tenant) as c:
+            rows = await c.fetch(
+                f"SELECT m.id, m.importance AS score FROM memories m WHERE {where} AND m.entity_keys && ${len(params)-1}::text[] "
+                f"ORDER BY m.importance DESC, m.valid_from DESC LIMIT ${len(params)}", *params)
+        return [(r["id"], float(r["score"])) for r in rows]
 
     async def query(self, scope: Scope, vector: list[float], model_id: str, k: int, filters: dict | None = None,
                     as_of: datetime | None = None) -> list[tuple[str, float]]:

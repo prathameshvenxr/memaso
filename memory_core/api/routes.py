@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from ..ingest import pipeline
+from ..manage.consolidate import consolidate, restore
 from ..manage.crud import edit_memory, get_memory, list_memories
 from ..manage.delete import hard_delete
 from ..manage.export import export_scope
@@ -50,6 +51,17 @@ class RememberReq(BaseModel):
     entities: list[str] = Field(default_factory=list, max_length=50)
     subject: str | None = None
     container: str | None = None
+
+
+class ConsolidateReq(BaseModel):
+    model_config = {"extra": "forbid"}
+    subject: str | None = None
+    container: str | None = None
+
+
+class RestoreReq(BaseModel):
+    model_config = {"extra": "forbid"}
+    memory_ids: list[str] = Field(min_length=1, max_length=500)
 
 
 class ForgetReq(BaseModel):
@@ -140,6 +152,22 @@ async def delete_route(memory_id: str, request: Request, p: Principal = Depends(
     if m is None or (p.subject and m.scope.subject != p.subject):
         raise HTTPException(404, "memory not found")
     return receipt_to_dict(await hard_delete(c, p.tenant, memory_id=memory_id))
+
+
+@router.post("/consolidate")
+async def consolidate_route(body: ConsolidateReq, request: Request, p: Principal = Depends(principal)):
+    """Merge duplicate facts and archive cold, low-value ones for one subject. Nothing is deleted."""
+    return await consolidate(_c(request), scope_for(p, body.subject, body.container))
+
+
+@router.post("/restore")
+async def restore_route(body: RestoreReq, request: Request, p: Principal = Depends(principal)):
+    c = _c(request)
+    if p.subject:  # a key bound to one subject may only restore that subject's memories
+        for m in await c.mems.get_many(p.tenant, body.memory_ids):
+            if m.scope.subject != p.subject:
+                raise HTTPException(404, "memory not found")
+    return {"restored": await restore(c, p.tenant, body.memory_ids)}
 
 
 @router.post("/forget")

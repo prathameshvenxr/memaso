@@ -13,7 +13,8 @@ from ..errors import LLMSchemaError
 from ..types import Candidate, Document, Kind, Memory, Scope, Verdict
 from .dedup import exact_duplicate
 from .extract import VERSION
-from .rules import POSITIVE, key_of, key_relation, pref_parts
+from .importance import score_importance
+from .rules import POSITIVE, canon_key, key_of, key_relation, pref_parts, refined_same
 
 _DIR = resources.files("memory_core.prompts") / VERSION
 JUDGE_SYSTEM = (_DIR / "judge.md").read_text()
@@ -27,7 +28,7 @@ class Decision:
     reason: str | None = None
 
 
-def rules_judge(cand_text: str, neighbours: list[Memory]) -> Decision | None:
+def rules_judge(cand_text: str, neighbours: list[Memory], ratio: float = 4.0, aliases=()) -> Decision | None:
     """Decide without a model when the text is a plain 'subject is value' statement. None means ambiguous."""
     cp = pref_parts(cand_text)
     if cp is not None:
@@ -47,10 +48,16 @@ def rules_judge(cand_text: str, neighbours: list[Memory]) -> Decision | None:
         if nk is None:
             ambiguous = True  # free text near a stored fact: it might be about the same thing
             continue
-        rel = key_relation(ck[0], nk[0])
+        a, b = canon_key(ck[0], aliases), canon_key(nk[0], aliases)
+        rel = key_relation(a, b)
         if rel == "same":
+            if ck[1] == nk[1]:  # the same statement in other words: confirm it, do not version it
+                return Decision(Verdict.duplicate, [n.id], "same attribute and value")
             return Decision(Verdict.updates, [n.id], "same attribute, new value")
-        ambiguous = ambiguous or rel == "related"
+        if rel == "related":
+            if refined_same(a, b, ck[1], nk[1], ratio):
+                return Decision(Verdict.updates, [n.id], "refined attribute name, comparable value")
+            ambiguous = True
     return None if ambiguous else Decision(Verdict.new, [], "different attribute")
 
 
@@ -68,7 +75,8 @@ async def resolve(cand: Candidate, vec: list[float], scope: Scope, c) -> Decisio
         return Decision(Verdict.duplicate, [dup.id], "same text")
     mode = c.cfg.truth.get("judge", "auto")  # auto: rules first, model only if ambiguous | rules | llm
     if mode in ("auto", "rules"):
-        decided = rules_judge(cand.text, neighbours)
+        decided = rules_judge(cand.text, neighbours, float(c.cfg.truth.get("related_ratio", 4.0)),
+                              c.cfg.truth.get("aliases", ()))
         if decided is not None:
             return decided
         if mode == "rules" or c.llm is None:
@@ -112,7 +120,7 @@ async def apply(decision: Decision, cand: Candidate, vec: list[float], scope: Sc
             supersede = (old.id, decision.verdict.value, decision.reason, valid_from)
     mem = Memory(id=str(uuid.uuid4()), scope=Scope(scope.tenant, scope.subject, doc.scope.container), text=cand.text,
                  kind=cand.kind, entities=cand.entities, confidence=cand.confidence,
-                 importance=0.7 if cand.kind in (Kind.decision, Kind.preference) else 0.5, valid_from=valid_from,
+                 importance=score_importance(cand.text, cand.kind, explicit=cand.confidence >= 1.0), valid_from=valid_from,
                  valid_to=valid_to, supersedes=[old.id] if supersede else [], source_doc_ids=[doc.id],
                  extractor_version=version, created_at=datetime.now(UTC), meta=doc.meta)
     await c.mems.insert(mem, vec, c.embedder.model_id, supersede)  # insert + link + close old: one transaction

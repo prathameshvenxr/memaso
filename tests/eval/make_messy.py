@@ -9,6 +9,7 @@ PER = 10
 T = lambda m, d: f"2026-{m:02d}-{d:02d}T09:00:00+00:00"
 CADENCES = ["daily", "weekly", "monthly", "quarterly"]
 THINGS = ["pie charts", "carousels", "long captions", "video ads", "dark mode reports", "emoji", "stock photos"]
+NAMES = ["Priya", "Rahul", "Meera", "Arjun", "Kavya", "Dev", "Isha", "Nikhil", "Tara", "Vikram"]
 CHATTER = ["Thanks for the update.", "Let me know if anything changes.", "The creative review went well.",
            "We should sync again on Friday.", "Priya joined the call late.", "The agency sent the new deck."]
 
@@ -50,6 +51,38 @@ def build() -> list[dict]:
                       "sessions": [{"at": T(1, 5), "text": f"I hate {th}"}, {"at": T(2, 1), "text": f"I like {th}"}],
                       "question": f"do I like {th}", "expect_contains": [f"I like {th}"],
                       "expect_absent": [f"I hate {th}"]})
+    # categories below were added later and come last, so every item above keeps its id and text
+    for _ in range(PER):
+        v1, v2 = val(), val()
+        items.append({"id": next(n), "type": "passive_update",
+                      "sessions": [{"at": T(1, 5), "text": f"Budget is {v1}"},
+                                   {"at": T(2, 1), "text": f"The budget has been updated to {v2}."}],
+                      "question": "what is the budget", "expect_contains": [v2], "expect_absent": [v1]})
+    for _ in range(PER):
+        v1, v2 = val(), val()
+        items.append({"id": next(n), "type": "from_to_update",
+                      "sessions": [{"at": T(1, 5), "text": f"The CPA target is {v1}"},
+                                   {"at": T(2, 1), "text": f"We changed the CPA target from {v1} to {v2}."}],
+                      # "from 4123 to 5678" rightly mentions the old number, so what must be gone is the stale claim
+                      "question": "what is the CPA target", "expect_contains": [v2], "expect_absent": [f"target is {v1}"]})
+    for _ in range(PER):
+        v1, v2 = val(), val()
+        items.append({"id": next(n), "type": "went_to_update",
+                      "sessions": [{"at": T(1, 5), "text": f"Budget is {v1}"},
+                                   {"at": T(2, 1), "text": f"The budget went up to {v2}."}],
+                      "question": "what is the budget", "expect_contains": [v2], "expect_absent": [v1]})
+    for _ in range(PER):  # a control: a daily figure must not erase the monthly one
+        v1, small = val(), str(rnd.randint(11, 99))
+        items.append({"id": next(n), "type": "daily_is_not_monthly",
+                      "sessions": [{"at": T(1, 5), "text": f"Budget is {v1}"},
+                                   {"at": T(2, 1), "text": f"The daily budget is {small}."}],
+                      "question": "what is the budget", "expect_contains": [v1, small]})
+    for _ in range(PER):  # the answer is one entity away from anything the question says
+        name, v = rnd.choice(NAMES), val()
+        items.append({"id": next(n), "type": "multi_hop",
+                      "sessions": [{"at": T(1, 5), "text": f"The account lead for Acme is {name}."},
+                                   {"at": T(1, 6), "text": f"The Acme CPA target is {v}."}],
+                      "question": f"what number should {name} hit", "expect_contains": [v]})
     return items
 
 

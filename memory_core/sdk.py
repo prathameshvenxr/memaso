@@ -17,7 +17,8 @@ def _memory(d: dict) -> Memory:
                   importance=d["importance"], valid_from=_dt(d["valid_from"]), valid_to=_dt(d["valid_to"]),
                   supersedes=d["supersedes"], source_doc_ids=d["source_doc_ids"],
                   extractor_version=d["extractor_version"], created_at=_dt(d["created_at"]),
-                  last_accessed=_dt(d["last_accessed"]), meta=d["meta"])
+                  last_accessed=_dt(d["last_accessed"]), meta=d["meta"],
+                  access_count=d.get("access_count", 0), archived_at=_dt(d.get("archived_at")))
 
 
 def _result(d: dict) -> SearchResult:
@@ -79,6 +80,13 @@ class MemoryClient:
         if container:
             params["container"] = container
         return _result(await self._req("GET", "/v1/profile", params=params))
+
+    async def consolidate(self, subject: str | None = None, container: str | None = None) -> dict:
+        """Merge duplicate facts and archive cold, low-value ones. Returns {"merged": n, "archived": n}."""
+        return await self._req("POST", "/v1/consolidate", json={"subject": self._sub(subject), "container": container})
+
+    async def restore(self, memory_ids: list[str]) -> int:
+        return (await self._req("POST", "/v1/restore", json={"memory_ids": memory_ids}))["restored"]
 
     async def forget(self, memory_id: str | None = None, document_id: str | None = None,
                      subject: str | None = None, everything: bool = False) -> DeletionReceipt:

@@ -76,6 +76,8 @@ class Memory:
     created_at: datetime
     last_accessed: datetime | None = None
     meta: dict = field(default_factory=dict)
+    access_count: int = 0
+    archived_at: datetime | None = None  # cold and low value: kept, but out of current search
 
 
 @dataclass

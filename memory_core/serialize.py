@@ -14,7 +14,8 @@ def memory_to_dict(m: Memory) -> dict:
             "kind": m.kind.value, "entities": m.entities, "confidence": m.confidence, "importance": m.importance,
             "valid_from": _iso(m.valid_from), "valid_to": _iso(m.valid_to), "supersedes": m.supersedes,
             "source_doc_ids": m.source_doc_ids, "extractor_version": m.extractor_version,
-            "created_at": _iso(m.created_at), "last_accessed": _iso(m.last_accessed), "meta": m.meta}
+            "created_at": _iso(m.created_at), "last_accessed": _iso(m.last_accessed), "meta": m.meta,
+            "access_count": m.access_count, "archived_at": _iso(m.archived_at)}
 
 
 def doc_to_dict(d: Document) -> dict:

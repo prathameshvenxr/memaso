@@ -19,6 +19,64 @@
   var DET = new Set(["the", "a", "an", "our", "your", "my", "their", "his", "her", "its", "this", "that", "current", "new"]);
   var POSITIVE = new Set(["prefer", "like", "want"]);
 
+  // updates phrased as events: "we raised our monthly budget to 80k" is the statement "monthly budget is 80k"
+  var CHANGE = "(?:raised|increased|bumped|boosted|lifted|upped|lowered|reduced|cut|dropped|decreased|changed|updated|revised|adjusted|moved|switched|set|pushed)";
+  var UNAMBIGUOUS = "(?:raised|increased|bumped|boosted|lifted|upped|lowered|reduced|dropped|decreased|changed|updated|revised|adjusted|moved|switched|pushed)";
+  var ADV = "(?:(?:just|now|already|recently|finally)\\s+)?";
+  var TO = "(?:from\\s+[^,;]{1,30}?\\s+)?to\\s+(?<v>[^\\s,;:!?]+(?:\\s[^\\s,;:!?]+){0,2})";
+  var SUBJ = /^(?:we|i|they|he|she|you|the\s+team|everyone|someone)(?:'ve|\s+have|\s+had)?\s+/i;
+  var ACTIVE_REST = new RegExp("^" + ADV + CHANGE + "\\s+(?:up\\s+|down\\s+)?(?<k>.{2,60}?)\\s+" + TO + "$", "i");
+  var NO_SUBJECT = new RegExp("^" + ADV + UNAMBIGUOUS + "\\s+(?:up\\s+|down\\s+)?(?<k>.{2,60}?)\\s+" + TO + "$", "i");
+  var PASSIVE = new RegExp("^(?<k>.{2,60}?)\\s+(?:has\\s+been|have\\s+been|was|were|got)\\s+" + ADV + CHANGE + "\\s+(?:up\\s+|down\\s+)?" + TO + "$", "i");
+  var INTRANS = new RegExp("^(?<k>.{2,60}?)\\s+(?:went|has\\s+gone|have\\s+gone|rose|has\\s+risen|climbed|has\\s+climbed|fell|has\\s+fallen|dropped|has\\s+dropped|jumped|slipped)\\s+(?:up\\s+|down\\s+)?" + TO + "$", "i");
+  var VALUE_WORDS = new Set(["daily", "weekly", "monthly", "quarterly", "yearly", "inr", "usd", "eur", "gbp", "on", "off", "enabled", "disabled", "paused", "active", "manual", "automatic"]);
+  var UNIT_WORDS = new Set(["percent", "%", "usd", "inr", "eur", "gbp", "dollars", "rupees", "euros", "pounds", "per", "daily", "weekly", "monthly", "yearly"]);
+  var BAD_KEY = new Set(["it", "this", "that", "there", "he", "she", "they", "you", "we", "i", "him", "her", "them", "us", "me", "in", "on", "at", "by", "into", "out", "up", "down", "off", "half"]);
+  // a real value is a number (with an optional unit) or a setting word; "this month" is dropped, the future is not a fact
+  function cleanValue(v) {
+    v = v.replace(/\.+$/, "").replace(/\s+(?:today|yesterday|now|(?:this|last)\s+(?:week|month|quarter|year))$/i, "");
+    if (/\b(?:next|tomorrow|soon|later|tonight)\b/i.test(v)) return null;
+    var t = v.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!t.length || t.length > 2 || !(/\d/.test(t[0]) || VALUE_WORDS.has(t[0]))) return null;
+    if (t.length === 2 && !UNIT_WORDS.has(t[1])) return null;
+    return v;
+  }
+  function keyOk(k) {
+    var t = Array.from(tokens(norm(k)));
+    return t.length > 0 && t.length <= 4 && !t.some(function (x) { return BAD_KEY.has(x); });
+  }
+  function rewriteChange(text) {
+    var s = text.trim().replace(/[.!]+$/, "").trim();
+    var sm = SUBJ.exec(s);
+    var cands = [sm ? ACTIVE_REST.exec(s.slice(sm[0].length)) : null, NO_SUBJECT.exec(s), PASSIVE.exec(s), INTRANS.exec(s)];
+    for (var i = 0; i < cands.length; i++) {
+      var m = cands[i];
+      if (!m) continue;
+      var v = cleanValue(m.groups.v), k = m.groups.k.trim().replace(/^(?:our|my|their|your|its)\s+/i, "");
+      if (v !== null && keyOk(k)) return k + " is " + v;
+    }
+    return null;
+  }
+
+  // "monthly budget" is "budget" only when the extra word is a period and the numbers are the same size
+  var PERIODS = new Set(["daily", "weekly", "monthly", "quarterly", "yearly", "annual", "hourly"]);
+  var EQUIV = new Set(["total", "overall", "main", "updated", "latest"]);
+  var UNITS = { k: 1e3, thousand: 1e3, m: 1e6, million: 1e6, b: 1e9, billion: 1e9 };
+  function parseNumber(v) {
+    var m = /(\d[\d,]*(?:\.\d+)?)\s*(%|thousand|million|billion|[kmb]\b)?/.exec(v.toLowerCase());
+    return m ? { n: parseFloat(m[1].replace(/,/g, "")) * (UNITS[m[2]] || 1), pct: m[2] === "%" } : null;
+  }
+  function refinedSame(a, b, va, vb) {
+    var A = tokens(a), B = tokens(b), small = subset(A, B) ? A : subset(B, A) ? B : null;
+    if (!small) return false;
+    var large = small === A ? B : A, extra = Array.from(large).filter(function (t) { return !small.has(t); });
+    if (!extra.every(function (t) { return PERIODS.has(t) || EQUIV.has(t); })) return false;
+    if (!extra.some(function (t) { return PERIODS.has(t); })) return true;
+    var na = parseNumber(va), nb = parseNumber(vb);
+    if (!na || !nb || na.pct !== nb.pct || Math.min(na.n, nb.n) <= 0) return false;
+    return Math.max(na.n, nb.n) / Math.min(na.n, nb.n) <= 4;
+  }
+
   var norm = function (s) { return s.toLowerCase().replace(/\s+/g, " ").trim(); };
   var stripMarkers = function (s) { return s.trim().replace(MARK, "").trim(); };
   var subjectOf = function (k) { k = norm(k); return k === "i" || k === "we" ? "user" : k; };
@@ -42,7 +100,7 @@
       if (k === "user" || tk.size === 0 || Array.from(tk).every(function (t) { return PRON.has(t); })) return null;
     }
     if (m.groups.pv) k += " " + m.groups.pv.toLowerCase().replace(/s$/, "");
-    return { k: k, v: norm(m.groups.v) };
+    return { k: k, v: norm(m.groups.v).replace(/^(?:now\s+|currently\s+)?(?:set\s+to\s+)?/, "") };
   }
   function prefParts(text) {
     var m = match(text);
@@ -60,6 +118,7 @@
       s = stripMarkers(s.replace(/[.!]+$/, "").trim());
       if (s.length < 6 || s.length > 200) return;
       if (HEDGE.test(s)) { skipped.push("a hedge (“" + s + "”) is not a fact"); return; }
+      s = rewriteChange(s) || s;
       var m = KEY.exec(s);
       if (m && /^(was|were)$/i.test(m.groups.be || "")) { skipped.push("a past-tense remark is history, not a current fact"); return; }
       if (m && COMPOUND.test(m.groups.v)) { skipped.push("a compound sentence stays verbatim-only"); return; }
@@ -90,8 +149,11 @@
       var nk = keyOf(f.text);
       if (!nk) continue;
       var rel = relation(ck.k, nk.k);
-      if (rel === "same") return { v: "updates", target: f };
-      if (rel === "related") amb = f;
+      if (rel === "same") return nk.v === ck.v ? { v: "duplicate", target: f } : { v: "updates", target: f };
+      if (rel === "related") {
+        if (refinedSame(ck.k, nk.k, ck.v, nk.v)) return { v: "updates", target: f };
+        amb = f;
+      }
     }
     return amb ? { v: "new", ambiguous: "overlaps “" + amb.text + "”, so a model would decide; without one both stay" } : { v: "new" };
   }

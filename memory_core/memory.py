@@ -12,6 +12,7 @@ from datetime import datetime
 from .bootstrap import build
 from .config import Config, load_config
 from .ingest import pipeline
+from .manage.consolidate import consolidate, restore
 from .manage.delete import hard_delete
 from .manage.export import export_scope
 from .retrieval.profile import profile
@@ -69,6 +70,14 @@ class Memory:
                 parts.append(rec.context)
         text = "\n".join(parts)
         return text if count_tokens(text) <= token_budget else ""
+
+    async def consolidate(self, scope: Scope) -> dict:
+        """Merge duplicate facts and archive cold, low-value ones (kept, not deleted). Run it from a scheduler."""
+        return await consolidate(self.c, scope)
+
+    async def restore(self, tenant: str, ids: list[str]) -> int:
+        """Bring archived memories back into current search, unless a current fact already states the same attribute."""
+        return await restore(self.c, tenant, ids)
 
     async def forget(self, tenant: str, **selector):
         return await hard_delete(self.c, tenant, **selector)

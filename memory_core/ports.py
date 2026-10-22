@@ -59,6 +59,21 @@ class MemoryStore(Protocol):
         reopen: bool = False
     ) -> int: ...
     async def touch(self, tenant: str, ids: list[str]) -> None: ...
+    async def archive(self, tenant: str, ids: list[str], at: datetime) -> int:
+        """Retire cold memories from current search and free their vectors; rows and source text stay."""
+
+    async def unarchive(self, tenant: str, ids: list[str]) -> int: ...
+    async def merge_duplicate(self, tenant: str, keep_id: str, dup_id: str, at: datetime) -> None:
+        """One transaction: close `dup_id`, move its provenance to `keep_id`, raise the kept one's confidence."""
+
+    async def window(self, scope: Scope, limit: int, own_container_only: bool = False) -> list[Memory]:
+        """Current, un-archived memories, coldest first (the candidates for archiving)."""
+
+    async def count_current(self, scope: Scope, own_container_only: bool = False) -> int: ...
+    async def by_entities(self, scope: Scope, keys: list[str], k: int, filters: dict | None,
+                          as_of: datetime | None) -> list[tuple[str, float]]:
+        """Current memories naming any of these lower-cased entities, most important first."""
+
     async def forget(self, tenant: str, memory_id: str, reopen: bool = False) -> dict:
         """Atomically remove one memory with its source text: the chunks its words were found in, its links, the
         source documents nothing else cites, and its words inside surviving documents and chunks.

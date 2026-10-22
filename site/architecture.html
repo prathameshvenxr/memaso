@@ -224,6 +224,10 @@
     real confidence
     timestamptz valid_from
     timestamptz valid_to "null while current"
+    real importance "grows when restated"
+    int access_count "times it was recalled"
+    timestamptz archived_at "set when cold; the row and its text stay"
+    text entity_keys "lower-cased names, GIN-indexed"
   }
   MEMORY_CHUNKS {
     text memory_id FK
@@ -250,8 +254,10 @@
       <h2 id="decisions">Design decisions</h2>
       <div class="decisions">
         <div class="decision"><h3>Verbatim first</h3><p>A summary loses the detail you need later, so the words are kept and searched directly. Facts sit on top because verbatim text alone cannot say which of two statements is current. This follows the framing of MemPalace, which stores conversations verbatim and retrieves without a model.</p></div>
-        <div class="decision"><h3>Rules before models</h3><p>Plain statements are decided by rules at zero token cost. A model is consulted only for free text near a stored fact. The honest cost is paraphrased updates, which rules cannot catch: 0.00 on that category, resolved when a model is present.</p></div>
+        <div class="decision"><h3>Rules before models</h3><p>Plain statements are decided by rules at zero token cost. A model is consulted only for free text near a stored fact. Updates phrased as events, and a refined name beside a number of the same size, are read by rules. What stays ambiguous (an extra word that is not a period) is kept as two facts unless a model decides.</p></div>
         <div class="decision"><h3>Exact search, not an approximate index</h3><p>With tenant, subject and validity filters an approximate index can silently drop true matches, which would hide a current fact. An exact scan costs latency instead: 233 ms p95 at 100k vectors, 333 ms at 200k.</p></div>
+        <div class="decision"><h3>Archive, never delete, what goes cold</h3><p>Forgetting by deletion would lose the source text. Consolidation closes a cold, low-value fact's validity and frees its vector, while the row, its words and its history stay and can be restored, unless a newer fact has taken its place. What matters (importance of 0.8 or more) is never archived.</p></div>
+        <div class="decision"><h3>A graph without a graph store</h3><p>Entity links are a lower-cased array on each fact with a GIN index, so a hop is one indexed lookup in the database you already run. It is name co-occurrence rather than typed relations, which is what keeps it light.</p></div>
         <div class="decision"><h3>One transaction per change</h3><p>Inserting a fact, linking it and closing the old one is one transaction. So is forgetting a memory with its source text. A crash never leaves a half-superseded or half-forgotten state.</p></div>
         <div class="decision"><h3>Thresholds measured on real embeddings</h3><p>A toy embedder hid two mistakes. With MiniLM, “Budget is 50k” against “Budget is 80k” scored 0.75, below the first neighbour threshold of 0.80, so updates would have stacked. The thresholds are now 0.40 and 0.30, measured, and documented as tied to that embedder.</p></div>
         <div class="decision"><h3>Everything swappable, and proven so</h3><p>Ports for model, embedder, store, queue, auth and parser, chosen in configuration. Contract suites any adapter must pass. A test fails if core code imports an adapter or a vendor SDK.</p></div>
@@ -263,14 +269,32 @@
       <p class="chart-sub">p95 including query embedding. The line marks the 300 ms target.</p>
       <div class="chart"><div class="bar-row"><span>100k vectors</span><div class="track"><i class="mark" style="left:75.0%"></i><div class="fill teal" style="width:58.25%"></div></div><b>233 ms</b></div>
 <div class="bar-row"><span>200k vectors</span><div class="track"><i class="mark" style="left:75.0%"></i><div class="fill pink" style="width:83.25%"></div></div><b>333 ms</b></div></div>
-      <p class="chart-title">Messier chat, 60 conversations, no model</p>
-      <p class="chart-sub">Pass rate by category. Identical on the offline hash embedder and on MiniLM.</p>
+      <p class="chart-title">Messier chat, 110 conversations, no model</p>
+      <p class="chart-sub">Memaso passes every category, on the offline hash embedder and on MiniLM.</p>
       <div class="chart"><div class="bar-row"><span>First-person preference</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
 <div class="bar-row"><span>Correction (“Actually…”)</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
 <div class="bar-row"><span>Compound sentence</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
 <div class="bar-row"><span>Fact buried in chatter</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
 <div class="bar-row"><span>Opposite preferences</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
-<div class="bar-row"><span>Paraphrased update</span><div class="track"><div class="fill pink zero" style="width:0%"></div></div><b>0.00</b></div></div>
+<div class="bar-row"><span>Paraphrased update</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>Passive update</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>From-to update</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>“Went up to” update</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>Daily is not monthly</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>One hop through an entity</span><div class="track"><div class="fill teal" style="width:100%"></div></div><b>1.00</b></div></div>
+      <p class="chart-title">The same chats against flat notes</p>
+      <p class="chart-sub">A stand-in for a plain note-file memory: every statement kept, loaded whole, newest first, up to the same 1,000 tokens. It is not any vendor's implementation. It cannot retire a value, so every category where a value changes fails.</p>
+      <div class="chart"><div class="bar-row"><span>First-person preference</span><div class="track"><div class="fill" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>Correction (“Actually…”)</span><div class="track"><div class="fill pink zero" style="width:0%"></div></div><b>0.00</b></div>
+<div class="bar-row"><span>Compound sentence</span><div class="track"><div class="fill" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>Fact buried in chatter</span><div class="track"><div class="fill" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>Opposite preferences</span><div class="track"><div class="fill pink zero" style="width:0%"></div></div><b>0.00</b></div>
+<div class="bar-row"><span>Paraphrased update</span><div class="track"><div class="fill pink zero" style="width:0%"></div></div><b>0.00</b></div>
+<div class="bar-row"><span>Passive update</span><div class="track"><div class="fill pink zero" style="width:0%"></div></div><b>0.00</b></div>
+<div class="bar-row"><span>From-to update</span><div class="track"><div class="fill pink zero" style="width:0%"></div></div><b>0.00</b></div>
+<div class="bar-row"><span>“Went up to” update</span><div class="track"><div class="fill pink zero" style="width:0%"></div></div><b>0.00</b></div>
+<div class="bar-row"><span>Daily is not monthly</span><div class="track"><div class="fill" style="width:100%"></div></div><b>1.00</b></div>
+<div class="bar-row"><span>One hop through an entity</span><div class="track"><div class="fill" style="width:100%"></div></div><b>1.00</b></div></div>
       <p class="figure-note">The clean set (240 conversations) scores 1.00 on recall@5 and on correct-after-update with 0 stale leaks. Its abstention on near-domain probes is 0.00: a query like “churn of campq41” beside ad metrics scores about 0.5, the same as a vague genuine question, so no similarity cut separates them. The model-driven paths are covered by tests with scripted answers and have not been run against a live provider. Latency was measured on a laptop with Postgres in Docker.</p>
     </main>
   </div>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 from dataclasses import dataclass, field
 
@@ -22,11 +23,16 @@ DEFAULTS = {
     "auth": {"adapter": "apikey"},
     "parser": {"adapter": "text"},
     "truth": {"neighbour_threshold": 0.40,  # calibrated on MiniLM: same-attribute pairs scored 0.53-0.86
-               "neighbours": 5, "judge": "auto"},
+               "neighbours": 5, "judge": "auto",
+               "related_ratio": 4.0,  # "monthly budget" updates "budget" only when the numbers are within this factor
+               "aliases": [["cpa", "cost per acquisition", "cost per action"], ["roas", "return on ad spend"]]},
     "ingest": {"verbatim": True, "chunk_chars": 800},
     "facts": {"extract": "rules"},     # rules | llm | none: how facts are derived from ingested text
     "limits": {"requests_per_minute": 600},
-    "retrieval": {"min_similarity": 0.30},  # MiniLM: off-domain noise <= 0.22, real questions >= 0.37
+    "retrieval": {"min_similarity": 0.30,  # MiniLM: off-domain noise <= 0.22, real questions >= 0.37
+                  "graph_hops": 2},         # 0 turns the entity graph off; 1 = facts naming the entity; 2 = and their neighbours
+    "consolidation": {"archive_after_days": 180, "archive_below": 0.35, "max_current": 5000,
+                      "half_life_days": 90, "batch": 2000},   # explicit run: Memory.consolidate / POST /v1/consolidate
 }
 
 
@@ -43,6 +49,7 @@ class Config:
     retrieval: dict = field(default_factory=dict)
     facts: dict = field(default_factory=dict)
     ingest: dict = field(default_factory=dict)
+    consolidation: dict = field(default_factory=dict)
 
 
 def _coerce(v: str):
@@ -56,7 +63,7 @@ def _coerce(v: str):
 
 def load_config(path: str | None = None, env: dict | None = None) -> Config:
     env = os.environ if env is None else env
-    raw: dict = {k: dict(v) for k, v in DEFAULTS.items()}
+    raw: dict = copy.deepcopy(DEFAULTS)  # nested lists (aliases) must not be shared between Config instances
     if path:
         with open(path) as f:
             for section, vals in (yaml.safe_load(f) or {}).items():
