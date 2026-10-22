@@ -8,13 +8,14 @@
   <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#121211" media="(prefers-color-scheme: dark)">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="assets/fonts/bricolage.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="assets/styles.css">
 </head>
 <body class="has-toc">
   <a class="skip" href="#main">Skip to content</a>
   <header class="nav">
     <div class="container">
-      <a class="brand" href="./" aria-label="Memaso home">Memaso<span>.</span></a>
+      <a class="brand" href="./" aria-label="Memaso home"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"><img src="assets/logo-light.svg" alt="Memaso" width="122" height="26"></picture></a>
       <a class="link" href="docs.html">Docs</a>
       <a class="link" href="architecture.html" aria-current="page">Architecture</a>
       <a class="link hide-sm" href="https://github.com/prathameshvenxr/memaso">GitHub</a>
@@ -46,21 +47,21 @@
       <div class="diagram loading" id="d0" role="img" aria-label="diagram"><span>Loading diagram…</span></div><script type="text/plain" class="mmd" data-target="d0">flowchart LR
   subgraph clients[" Clients "]
     direction TB
-    LIB["Library<br/>Memory.create(cfg, llm=my_llm)"]
+    LIB["Library<br/>Memory.create(<br/>cfg, llm=my_llm)"]
     REST["REST + Python SDK"]
     MCP["MCP server<br/>4 tools"]
     LG["LangGraph hook<br/>remember / context"]
   end
   subgraph core[" memory_core "]
     direction TB
-    API["API layer<br/>keys · rate limit · token budget"]
-    ING["Ingest<br/>chunk · embed · extract · judge"]
+    API["API layer<br/>keys · rate limit<br/>token budget"]
+    ING["Ingest<br/>chunk · embed<br/>extract · judge"]
     RET["Recall<br/>hybrid search · fuse · pack"]
     MAN["Manage<br/>edit · forget · export"]
   end
-  subgraph ports[" Ports: every one swappable by config "]
+  subgraph ports[" Ports, all swappable "]
     direction TB
-    LLM[["LLM<br/>none · host · anthropic · openai · compat"]]
+    LLM[["LLM<br/>none · host · anthropic<br/>openai · compat"]]
     EMB[["Embedder<br/>fastembed (local) · openai"]]
     STO[["Store<br/>postgres + pgvector"]]
     QUE[["Queue<br/>in-process · redis"]]
@@ -143,7 +144,7 @@
   class N,D,P,K,AMB fact</script><p class="figure-note">Only the ambiguous branch ever reaches a model. Without one, both facts stay and nothing is guessed.</p>
 
       <h2 id="recall">Recall</h2>
-      <div class="diagram loading" id="d3" role="img" aria-label="diagram"><span>Loading diagram…</span></div><script type="text/plain" class="mmd" data-target="d3">flowchart LR
+      <div class="diagram loading" id="d3" role="img" aria-label="diagram"><span>Loading diagram…</span></div><script type="text/plain" class="mmd" data-target="d3">flowchart TB
   Q(["query + token_budget"]) --> E["embed locally"]
   E --> FV["facts<br/>vector"]
   Q --> FK["facts<br/>full-text"]
@@ -276,9 +277,9 @@
 
   <footer class="site">
     <div class="container">
-      <span class="grow">Memaso<span>.</span></span>
+      <span class="grow"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"><img src="assets/logo-light.svg" alt="Memaso" width="103" height="22"></picture></span>
       <a href="./">Home</a><a href="docs.html">Docs</a><a href="https://github.com/prathameshvenxr/memaso">GitHub</a>
-      <span>Code set in IBM Plex Mono, under the SIL Open Font License.</span>
+      <span>Set in Bricolage Grotesque and IBM Plex Mono, both under the SIL Open Font License.</span>
     </div>
   </footer>
 
@@ -297,7 +298,7 @@
       signalColor: "#A3A39B", signalTextColor: "#A3A39B", labelBoxBkgColor: "#262624", labelBoxBorderColor: "#EDEDE8", labelTextColor: "#EDEDE8",
       loopTextColor: "#A3A39B", noteBkgColor: "#3A2214", noteBorderColor: "#FF7A3D", noteTextColor: "#EDEDE8", sequenceNumberColor: "#121211" };
     await document.fonts.ready;
-    mermaid.initialize({ startOnLoad: false, theme: "base", securityLevel: "strict", flowchart: { useMaxWidth: true, htmlLabels: true }, sequence: { useMaxWidth: true }, er: { useMaxWidth: true }, themeVariables: { fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif', ...(dark ? night : light) } });
+    mermaid.initialize({ startOnLoad: false, theme: "base", securityLevel: "strict", flowchart: { useMaxWidth: true, htmlLabels: true, nodeSpacing: 34, rankSpacing: 44 }, sequence: { useMaxWidth: true, wrap: true, width: 150, messageMargin: 34 }, er: { useMaxWidth: true, minEntityWidth: 90, entityPadding: 10 }, themeVariables: { fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif', ...(dark ? night : light) } });
     for (const el of document.querySelectorAll("script.mmd")) {
       const target = document.getElementById(el.dataset.target);
       try {

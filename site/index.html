@@ -11,6 +11,7 @@
   <meta property="og:description" content="Verbatim chunks plus dated facts. Recall costs no model tokens. Bring your own model only for the ambiguous cases.">
   <meta property="og:type" content="website">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="assets/fonts/bricolage.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="assets/styles.css">
 </head>
 <body>
@@ -18,7 +19,7 @@
 
   <header class="nav">
     <div class="container">
-      <a class="brand" href="./" aria-label="Memaso home">Memaso<span>.</span></a>
+      <a class="brand" href="./" aria-label="Memaso home"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"><img src="assets/logo-light.svg" alt="Memaso" width="122" height="26"></picture></a>
       <a class="link" href="docs.html">Docs</a>
       <a class="link" href="architecture.html">Architecture</a>
       <a class="link hide-sm" href="https://github.com/prathameshvenxr/memaso">GitHub</a>
@@ -95,21 +96,22 @@
 
     <section class="block tint" id="cost">
       <div class="container">
-        <div class="cost">
-          <div class="big0">0<small>model tokens to recall</small></div>
-          <div class="scroll-x">
-            <table>
-              <thead><tr><th>Step</th><th>Model tokens</th></tr></thead>
-              <tbody>
-                <tr><td>Embedding passages and queries (local ONNX)</td><td class="zero">0</td></tr>
-                <tr><td>Recall: vector and full-text over both layers, fused</td><td class="zero">0</td></tr>
-                <tr><td>Facts from the agent's own <code>remember</code> call, or from rules</td><td class="zero">0 extra</td></tr>
-                <tr><td>Judging update versus new, plain statements</td><td class="zero">0</td></tr>
-                <tr><td>Judging free text close to a stored fact</td><td class="some">your model, only then</td></tr>
-                <tr><td>Facts extracted by a model (off by default)</td><td class="some">your model, per document</td></tr>
-              </tbody>
-            </table>
-          </div>
+        <div class="sec-head">
+          <h2>Recall costs no model tokens.</h2>
+          <p>Embedding, search and the judging of plain statements all run on your own machine. A model is used only where you switch one on, or where the text is genuinely ambiguous.</p>
+        </div>
+        <div class="scroll-x">
+          <table>
+            <thead><tr><th>Step</th><th>Model tokens</th></tr></thead>
+            <tbody>
+              <tr><td>Embedding passages and queries (local ONNX)</td><td class="zero">0</td></tr>
+              <tr><td>Recall: vector and full-text over both layers, fused</td><td class="zero">0</td></tr>
+              <tr><td>Facts from the agent's own <code>remember</code> call, or from rules</td><td class="zero">0 extra</td></tr>
+              <tr><td>Judging update versus new, plain statements</td><td class="zero">0</td></tr>
+              <tr><td>Judging free text close to a stored fact</td><td class="some">your model, only then</td></tr>
+              <tr><td>Facts extracted by a model (off by default)</td><td class="some">your model, per document</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -134,13 +136,18 @@
           <h2>Measured, including the misses.</h2>
           <p>Local MiniLM embeddings, no language model anywhere in these runs.</p>
         </div>
-        <div class="stats">
-          <div class="stat"><div class="n">1.00</div><p>recall@5 on 240 synthetic ads conversations.</p></div>
-          <div class="stat"><div class="n">1.00</div><p>correct after an update: the newer value wins and the old one is never returned as current.</p></div>
-          <div class="stat"><div class="n">5<small>of 6</small></div><p>kinds of messy chat at 1.00: first-person phrasing, corrections, compound sentences, buried facts, opposite preferences.</p></div>
-          <div class="stat"><div class="n warn">0.00</div><p>on paraphrased updates without a model (“raised our monthly budget to 80k”). A model resolves these, which is why one is optional and not absent.</p></div>
-          <div class="stat"><div class="n">233<small>ms</small></div><p>p95 search at 100k vectors for one subject, query embedding included. 333 ms at 200k.</p></div>
-          <div class="stat"><div class="n">201<small>tests</small></div><p>including row-level-security checks, a cross-tenant fuzz, concurrency tests and a regression test for every review finding.</p></div>
+        <div class="scroll-x">
+          <table class="results">
+            <thead><tr><th>Measure</th><th>Result</th><th>What it tells you</th></tr></thead>
+            <tbody>
+              <tr><td>Recall@5, 240 synthetic ads conversations</td><td>1.00</td><td>The right memory is in the top five.</td></tr>
+              <tr><td>Correct after an update</td><td>1.00</td><td>The newer value wins, and the old one is never returned as current.</td></tr>
+              <tr><td>Six kinds of messy chat</td><td>5 of 6 at 1.00</td><td>First-person phrasing, corrections, compound sentences, buried facts and opposite preferences all pass.</td></tr>
+              <tr><td>Paraphrased updates, no model</td><td class="warn">0.00</td><td>“Raised our monthly budget to 80k” needs a model to link it to “budget”. This is why one is optional rather than absent.</td></tr>
+              <tr><td>p95 search at 100k vectors</td><td>233 ms</td><td>For one subject, query embedding included. 333 ms at 200k.</td></tr>
+              <tr><td>Tests</td><td>201</td><td>Including row-level-security checks, a cross-tenant fuzz, concurrency tests and a regression test for every review finding.</td></tr>
+            </tbody>
+          </table>
         </div>
         <p class="fineprint">The datasets are synthetic and template-based, and the model-driven paths are tested with scripted answers, not a live provider. The <a href="docs.html#limits">limits</a> are written down.</p>
       </div>
@@ -184,9 +191,9 @@ docker compose run --rm migrate python -m memory_core create-key acme --subject 
 
   <footer class="site">
     <div class="container">
-      <span class="grow">Memaso<span>.</span></span>
+      <span class="grow"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"><img src="assets/logo-light.svg" alt="Memaso" width="103" height="22"></picture></span>
       <a href="docs.html">Docs</a><a href="architecture.html">Architecture</a><a href="https://github.com/prathameshvenxr/memaso">GitHub</a>
-      <span>Code set in IBM Plex Mono, under the SIL Open Font License.</span>
+      <span>Set in Bricolage Grotesque and IBM Plex Mono, both under the SIL Open Font License.</span>
     </div>
   </footer>
 
