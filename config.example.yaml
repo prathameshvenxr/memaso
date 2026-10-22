@@ -1,0 +1,20 @@
+# Adapters are chosen here only. Env overrides: MEMASO__LLM__ADAPTER=openai, MEMASO__TRUTH__JUDGE=rules, ...
+# The default stack is free and needs no model: verbatim chunks + local embeddings + rules for facts.
+llm:      {adapter: none}                       # none | host | anthropic | openai | compat | fake | "pkg.mod:factory"
+embedder: {adapter: fastembed}                  # fastembed (local ONNX) | openai (needs dim) | local | fake
+store:    {adapter: postgres,
+           dsn: "postgresql://memaso_app:memaso_app@localhost:54329/memaso",
+           admin_dsn: "postgresql://postgres:memaso_admin@localhost:54329/memaso"}
+queue:    {adapter: inproc, workers: 2}         # inproc | redis (several replicas)
+auth:     {adapter: apikey}
+ingest:   {verbatim: true, chunk_chars: 800}    # layer A: store the conversation text itself, searchable
+facts:    {extract: rules}                      # layer B: rules (no model) | llm (the configured/host model) | none
+truth:    {judge: auto, neighbour_threshold: 0.40, neighbours: 5}   # auto: rules decide, a model only if ambiguous.
+                                                                     # 0.40 fits MiniLM; re-measure if you change the embedder
+retrieval: {min_similarity: 0.30}               # vector matches below this cosine are dropped (abstain, don't guess)
+limits:   {requests_per_minute: 600}
+
+# Use the application's own model instead (library mode): Memory.create(cfg, llm=call_llm), llm adapter "host".
+# Example of a paid/remote model for model-based extraction:
+#   llm:   {adapter: anthropic, model: <fast-tier-model>}
+#   facts: {extract: llm}

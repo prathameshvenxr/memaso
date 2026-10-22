@@ -1,0 +1,52 @@
+# docker compose up -d                                    -> Postgres + API, no model and no API key needed
+# MEMASO_QUEUE=redis docker compose --profile scale up -d --scale api=3   -> Redis queue + several API replicas
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_PASSWORD: memaso_admin
+      POSTGRES_DB: memaso
+    ports: ["127.0.0.1:54329:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/initdb.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U postgres -d memaso"]
+      interval: 2s
+      retries: 30
+
+  api:
+    build:
+      context: .
+      args:
+        EXTRAS: "[fastembed,redis]"
+    depends_on:
+      db: {condition: service_healthy}
+    ports: ["8080"]            # random host port per replica; put a reverse proxy in front when scaling
+    volumes: [models:/data/models]
+    environment:
+      MEMASO__STORE__DSN: postgresql://memaso_app:memaso_app@db:5432/memaso
+      MEMASO__STORE__ADMIN_DSN: postgresql://postgres:memaso_admin@db:5432/memaso
+      FASTEMBED_CACHE_PATH: /data/models
+      # Free by default: local ONNX embeddings, verbatim storage, rules for facts, no LLM at all.
+      MEMASO__EMBEDDER__ADAPTER: ${MEMASO_EMBEDDER:-fastembed}
+      MEMASO__LLM__ADAPTER: ${MEMASO_LLM:-none}
+      MEMASO__FACTS__EXTRACT: ${MEMASO_FACTS:-rules}
+      MEMASO__QUEUE__ADAPTER: ${MEMASO_QUEUE:-inproc}
+      MEMASO__QUEUE__URL: redis://redis:6379/0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8080/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s   # the first start downloads the embedding model
+    restart: unless-stopped
+
+  redis:
+    profiles: ["scale"]
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+volumes:
+  pgdata:
+  models:
