@@ -27,6 +27,7 @@
   <div class="container doc">
     <nav class="toc" aria-label="On this page">
       <ol>
+        <li><a href="#overview-video">Overview video</a></li>
         <li><a href="#quick-start">Quick start</a></li>
         <li><a href="#concepts">Concepts</a></li>
         <li class="sub"><a href="#scope">Scope</a></li>
@@ -48,6 +49,23 @@
     <main id="main" class="prose">
       <h1>Documentation</h1>
       <p class="lead">Memaso is a memory engine for AI agents. It stores each conversation turn verbatim, derives dated facts from it, and recalls a small block for your prompt. Everything runs without a language model unless you choose to add one.</p>
+
+      <h2 id="overview-video">Overview video</h2>
+      <p>Seventy seconds on what Memaso stores, how an update closes an older fact, and why recall costs no model tokens.</p>
+      <video class="video" controls preload="metadata" playsinline poster="assets/video-poster.jpg" aria-describedby="video-transcript">
+        <source src="assets/memaso-explainer.mp4" type="video/mp4">
+        Your browser can't play this video. <a href="assets/memaso-explainer.mp4">Download it</a>.
+      </video>
+      <details class="transcript" id="video-transcript">
+        <summary>Read the transcript</summary>
+          <p>Your AI agent forgets. Or worse, it remembers the wrong thing.</p>
+          <p>Budget is fifty thousand. Weeks later, it's eighty thousand. A plain note file keeps both, and your agent has to guess.</p>
+          <p>Memaso keeps every word you said, and the facts inside it, each with dates. A newer fact closes the older one, so the current value is never in doubt.</p>
+          <p>Recall costs zero model tokens. Search runs on your own machine, in the Postgres you already have.</p>
+          <p>It looks after itself. Duplicates merge. Stale, low-value facts are archived, not deleted. And names link facts, so a question about Priya finds the account behind her.</p>
+          <p>On the same chats, a flat note file passed five of eleven categories. Memaso passed all eleven, and used a fraction of the prompt tokens.</p>
+          <p>Memaso. Memory that knows when it stopped being true. Find it on GitHub.</p>
+      </details>
 
       <h2 id="quick-start">Quick start</h2>
       <p>You need Docker. The first start downloads a ~90 MB local embedding model, so allow a few minutes and network access once.</p>

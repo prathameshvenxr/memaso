@@ -164,6 +164,12 @@ table.results td:nth-child(3) { color: var(--muted); font-weight: 400; }
 .cta h2 { font-size: clamp(28px, 3.8vw, 44px); font-weight: 700; letter-spacing: -0.035em; line-height: 1.06; }
 .cta p { color: var(--muted); }
 
+/* the overview video on the docs page */
+.video { display: block; width: 100%; aspect-ratio: 16 / 9; background: var(--ink); border: 1px solid var(--hair-2); border-radius: var(--radius); margin: 1.2em 0 .8em; }
+.transcript { margin: 0 0 1.4em; color: var(--muted); font-size: 15.5px; }
+.transcript summary { cursor: pointer; font-weight: 600; color: var(--ink); padding: 4px 0; }
+.transcript p { margin: .6em 0 0; }
+
 /* code blocks */
 pre.code { position: relative; margin: 0 0 1.4em; background: var(--tint); color: var(--ink); border-radius: var(--radius-sm); padding: 16px 18px; overflow-x: auto; font: 400 13.5px/1.7 var(--mono); border: 1px solid var(--hair); }
 .cta pre.code { background: var(--bg); margin: 0; }
